@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wandrer Run Planner
 // @namespace    https://github.com/aslan91/wandrer-run-planner
-// @version      0.1.0
+// @version      0.2.0
 // @description  Plan Strava runs that maximize untravelled (Wandrer red) paths within a target distance.
 // @match        https://www.strava.com/routes*
 // @match        https://www.strava.com/maps*
@@ -44,28 +44,140 @@
 
   // ----------------------------------------------------------------------
   // Find the Strava Mapbox GL map instance.
-  // Strava stores it on a DOM node; we probe known spots and fall back to a
-  // canvas walk. Returns the mapboxgl.Map or null.
+  //
+  // Strava bundles Mapbox GL inside a module closure (React app), so the map is
+  // not on a global or a DOM property. We therefore:
+  //   1. check a few known globals,
+  //   2. capture instances via a Map-constructor hook (if mapboxgl is global),
+  //   3. walk the React fiber tree from the map canvas and search the object
+  //      graph for anything that quacks like a Mapbox GL map.
+  // The result is cached.
   // ----------------------------------------------------------------------
-  function findMap() {
-    const guesses = [
-      window.map,
-      window.__map,
-      window.routeBuilder && window.routeBuilder.map,
-    ];
-    for (const g of guesses) {
-      if (g && typeof g.getCenter === "function") return g;
+  let cachedMap = null;
+
+  function looksLikeMap(o) {
+    return (
+      o &&
+      typeof o === "object" &&
+      typeof o.getCenter === "function" &&
+      typeof o.querySourceFeatures === "function" &&
+      typeof o.getStyle === "function"
+    );
+  }
+
+  // Install a constructor hook so future map creations (e.g. after reload) are
+  // captured. Only works when mapboxgl is exposed globally; harmless otherwise.
+  (function hookMapboxCtor() {
+    window.__wrpMaps = window.__wrpMaps || [];
+    function wrap(mb) {
+      if (!mb || !mb.Map || mb.Map.__wrpHooked) return;
+      const Orig = mb.Map;
+      function Wrapped(...args) {
+        const m = new Orig(...args);
+        try { window.__wrpMaps.push(m); } catch (_e) { /* ignore */ }
+        return m;
+      }
+      Wrapped.prototype = Orig.prototype;
+      Object.setPrototypeOf(Wrapped, Orig);
+      Wrapped.__wrpHooked = true;
+      try { mb.Map = Wrapped; } catch (_e) { /* ignore */ }
     }
-    // Fall back: look for a node whose internal props hold a map.
-    const canvases = document.querySelectorAll(".mapboxgl-canvas, canvas");
-    for (const c of canvases) {
-      const holder = c.closest(".mapboxgl-map") || c.parentElement;
-      for (const key in holder || {}) {
-        const val = holder[key];
-        if (val && typeof val.getCenter === "function") return val;
+    try {
+      let mb = window.mapboxgl;
+      wrap(mb);
+      Object.defineProperty(window, "mapboxgl", {
+        configurable: true,
+        get() { return mb; },
+        set(v) { mb = v; wrap(v); },
+      });
+    } catch (_e) { /* mapboxgl already non-configurable or absent */ }
+  })();
+
+  function getReactFiber(node) {
+    for (const k of Object.keys(node)) {
+      if (k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$")) {
+        return node[k];
       }
     }
     return null;
+  }
+
+  // Bounded breadth-first search of an object graph for a map instance.
+  // Skips DOM nodes/Window to avoid blowing up the traversal.
+  function searchGraph(roots, maxNodes = 30000) {
+    const visited = new WeakSet();
+    const queue = roots.filter((r) => r && typeof r === "object");
+    let count = 0;
+    while (queue.length && count < maxNodes) {
+      const cur = queue.shift();
+      count++;
+      if (!cur || typeof cur !== "object" || visited.has(cur)) continue;
+      visited.add(cur);
+      if (looksLikeMap(cur)) return cur;
+      let keys;
+      try { keys = Object.keys(cur); } catch (_e) { continue; }
+      for (const k of keys) {
+        let v;
+        try { v = cur[k]; } catch (_e) { continue; }
+        if (!v || typeof v !== "object" || visited.has(v)) continue;
+        if (v instanceof Node || v === window) continue; // don't descend into DOM
+        queue.push(v);
+      }
+    }
+    return null;
+  }
+
+  function findMap() {
+    if (looksLikeMap(cachedMap)) return cachedMap;
+
+    // 1. Known globals + constructor-hook captures.
+    const globals = [
+      window.map,
+      window.__map,
+      window.routeBuilder && window.routeBuilder.map,
+      ...(window.__wrpMaps || []),
+    ];
+    for (const g of globals) {
+      if (looksLikeMap(g)) return (cachedMap = g);
+    }
+
+    // 2. React fiber walk from the map canvas/container.
+    let nodes = [
+      ...document.querySelectorAll(".mapboxgl-map, .mapboxgl-canvas, canvas"),
+    ];
+    if (nodes.length === 0) {
+      // Last resort: scan every element's fiber (bounded by searchGraph).
+      nodes = [...document.querySelectorAll("div, canvas")];
+    }
+    const roots = [];
+    for (const n of nodes) {
+      const fiber = getReactFiber(n);
+      if (fiber) roots.push(fiber);
+    }
+    const found = searchGraph(roots);
+    if (found) return (cachedMap = found);
+
+    return null;
+  }
+
+  // Log what the finder saw, to help diagnose a failed lookup.
+  function logMapDiagnostics() {
+    const canvases = document.querySelectorAll(".mapboxgl-canvas, canvas");
+    const containers = document.querySelectorAll(".mapboxgl-map");
+    let withFiber = 0;
+    document.querySelectorAll(".mapboxgl-map, .mapboxgl-canvas, canvas").forEach(
+      (n) => { if (getReactFiber(n)) withFiber++; }
+    );
+    // eslint-disable-next-line no-console
+    console.log(
+      "[WRP] map not found.",
+      `canvases=${canvases.length}`,
+      `mapboxgl-map containers=${containers.length}`,
+      `nodes with React fiber=${withFiber}`,
+      `hooked maps=${(window.__wrpMaps || []).length}`,
+      "\nTip: make sure the route builder map is visible, then retry. If counts",
+      "are all 0, the map may not be a Mapbox GL map or lives in a frame."
+    );
   }
 
   // ----------------------------------------------------------------------
@@ -104,7 +216,8 @@
   $("#wrp-pick").addEventListener("click", () => {
     const map = findMap();
     if (!map) {
-      setStatus("Map not found yet — open the route builder.");
+      logMapDiagnostics();
+      setStatus("Map not found — open the route builder (see console for details).");
       return;
     }
     pickingStart = true;
@@ -219,7 +332,10 @@
 
   function onDetect() {
     const map = findMap();
-    if (!map) return setStatus("Map not found — open the route builder.");
+    if (!map) {
+      logMapDiagnostics();
+      return setStatus("Map not found — open the route builder (see console for details).");
+    }
     const { stats } = readTravelled(map);
     if (!stats.source) {
       setStatus(
