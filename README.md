@@ -52,6 +52,10 @@ python -m app.cli --lat 49.83 --lng 10.88 --km 6 --out ..\run.gpx
 uvicorn app.main:app --reload --port 8000
 ```
 
+> On Windows, run via the venv to avoid a global Python without FastAPI:
+> `.\run.ps1` (wraps `.\.venv\Scripts\python.exe -m uvicorn ...`). Use
+> `.\run.ps1 -Port 8080` or `.\run.ps1 -NoReload` as needed.
+
 ## Userscript
 
 Install [Tampermonkey](https://www.tampermonkey.net/), then add
