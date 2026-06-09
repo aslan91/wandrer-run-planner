@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wandrer Run Planner
 // @namespace    https://github.com/aslan91/wandrer-run-planner
-// @version      0.13.0
+// @version      0.13.2
 // @description  Plan runs that maximize untravelled (Wandrer red) paths within a target distance. Reads travelled data natively on wandrer.earth's Big Map, or from the Wandrer overlay on Strava's route builder.
 // @match        https://www.strava.com/routes*
 // @match        https://www.strava.com/maps*
@@ -12,6 +12,7 @@
 // @updateURL    https://raw.githubusercontent.com/aslan91/wandrer-run-planner/main/userscript/wandrer-run-planner.user.js
 // @downloadURL  https://raw.githubusercontent.com/aslan91/wandrer-run-planner/main/userscript/wandrer-run-planner.user.js
 // @grant        GM_xmlhttpRequest
+// @grant        unsafeWindow
 // @connect      127.0.0.1
 // @connect      localhost
 // @run-at       document-idle
@@ -26,6 +27,14 @@
   // Use 127.0.0.1 (not "localhost"): on Windows, "localhost" often resolves to
   // IPv6 ::1 first, but uvicorn binds IPv4 127.0.0.1 only -> connection refused.
   const BACKEND = "http://127.0.0.1:8000/plan";
+
+  // The script runs in the userscript manager's SANDBOX (because @grant is set),
+  // where `window` is NOT the page's real window: the DOM is shared, but page
+  // JS globals — crucially `mapboxgl` and any live map instance — live on the
+  // REAL window, exposed here as `unsafeWindow`. We must hook/read maps through
+  // that page window; the sandbox `window` has no `mapboxgl`. (Confirmed on
+  // wandrer.earth: sandbox sees `mapboxgl global=false`, page has it.)
+  const PAGE = (typeof unsafeWindow !== "undefined" && unsafeWindow) || window;
 
   // ----------------------------------------------------------------------
   // Site adapters
@@ -138,54 +147,85 @@
     );
   }
 
+  // Record a map instance the first time we see one quack like a Mapbox map.
+  function rememberMap(m) {
+    try {
+      window.__wrpMaps = window.__wrpMaps || [];
+      if (looksLikeMap(m) && !window.__wrpMaps.includes(m)) window.__wrpMaps.push(m);
+    } catch (_e) { /* ignore */ }
+  }
+
+  // Patch the prototype render loop so an ALREADY-created map (one made in a
+  // closure before our hook ran — e.g. wandrer.earth's map) is still captured:
+  // it records `this` the next time the map paints/resizes. This is the
+  // timing-independent capture that the constructor hook alone can miss.
+  function patchMapProto(MapCtor) {
+    const proto = MapCtor && MapCtor.prototype;
+    if (!proto || proto.__wrpProtoHooked) return;
+    for (const name of ["_render", "triggerRepaint", "resize"]) {
+      const orig = proto[name];
+      if (typeof orig !== "function") continue;
+      const wrapped = function (...a) { rememberMap(this); return orig.apply(this, a); };
+      try { proto[name] = wrapped; } catch (_e) { /* ignore */ }
+    }
+    try { proto.__wrpProtoHooked = true; } catch (_e) { /* ignore */ }
+  }
+
+  function wrapMapbox(mb) {
+    if (!mb || !mb.Map) return;
+    patchMapProto(mb.Map);
+    if (mb.Map.__wrpHooked) return;
+    const Orig = mb.Map;
+    function Wrapped(...args) {
+      const m = new Orig(...args);
+      rememberMap(m);
+      return m;
+    }
+    Wrapped.prototype = Orig.prototype;
+    Object.setPrototypeOf(Wrapped, Orig);
+    Wrapped.__wrpHooked = true;
+    try { mb.Map = Wrapped; } catch (_e) { /* ignore */ }
+  }
+
   // Install a constructor hook so future map creations (e.g. after reload) are
-  // captured. Only works when mapboxgl is exposed globally; harmless otherwise.
+  // captured, and patch the prototype of any mapboxgl already present. We hook
+  // the PAGE window (unsafeWindow) because that is where mapboxgl actually lives;
+  // the sandbox `window` is also hooked in case the manager is not sandboxed.
   (function hookMapboxCtor() {
     window.__wrpMaps = window.__wrpMaps || [];
-    const remember = (m) => {
-      try { if (looksLikeMap(m) && !window.__wrpMaps.includes(m)) window.__wrpMaps.push(m); }
-      catch (_e) { /* ignore */ }
+    const install = (host) => {
+      if (!host) return;
+      try {
+        let mb = host.mapboxgl;
+        wrapMapbox(mb);
+        Object.defineProperty(host, "mapboxgl", {
+          configurable: true,
+          get() { return mb; },
+          set(v) { mb = v; wrapMapbox(v); },
+        });
+      } catch (_e) {
+        // mapboxgl already non-configurable/absent — still patch what's there.
+        try { wrapMapbox(host.mapboxgl); } catch (_e2) { /* ignore */ }
+      }
     };
-    // Patch the prototype render loop so an ALREADY-created map (one made in a
-    // closure before our hook ran — e.g. wandrer.earth's iframe map) is still
-    // captured: it records `this` the first time the map paints. This is the
-    // timing-independent capture that the constructor hook alone can miss.
-    function patchMapProto(MapCtor) {
-      const proto = MapCtor && MapCtor.prototype;
-      if (!proto || proto.__wrpProtoHooked) return;
-      for (const name of ["_render", "triggerRepaint", "resize"]) {
-        const orig = proto[name];
-        if (typeof orig !== "function") continue;
-        const wrapped = function (...a) { remember(this); return orig.apply(this, a); };
-        try { proto[name] = wrapped; } catch (_e) { /* ignore */ }
-      }
-      try { proto.__wrpProtoHooked = true; } catch (_e) { /* ignore */ }
-    }
-    function wrap(mb) {
-      if (!mb || !mb.Map) return;
-      patchMapProto(mb.Map);
-      if (mb.Map.__wrpHooked) return;
-      const Orig = mb.Map;
-      function Wrapped(...args) {
-        const m = new Orig(...args);
-        remember(m);
-        return m;
-      }
-      Wrapped.prototype = Orig.prototype;
-      Object.setPrototypeOf(Wrapped, Orig);
-      Wrapped.__wrpHooked = true;
-      try { mb.Map = Wrapped; } catch (_e) { /* ignore */ }
-    }
-    try {
-      let mb = window.mapboxgl;
-      wrap(mb);
-      Object.defineProperty(window, "mapboxgl", {
-        configurable: true,
-        get() { return mb; },
-        set(v) { mb = v; wrap(v); },
-      });
-    } catch (_e) { /* mapboxgl already non-configurable or absent */ }
+    install(PAGE);
+    if (window !== PAGE) install(window);
   })();
+
+  // Nudge already-created, idle maps into a render so the prototype hook can
+  // capture them. Mapbox maps (trackResize on by default) call resize() on a
+  // window 'resize' event, and our patched prototype records `this` there. Fire
+  // on the PAGE window (where the map's resize listener is registered) and the
+  // sandbox window, and (re)wrap mapboxgl in case it appeared after init.
+  function nudgeMaps() {
+    try { wrapMapbox(PAGE.mapboxgl); } catch (_e) { /* ignore */ }
+    if (window !== PAGE) { try { wrapMapbox(window.mapboxgl); } catch (_e) { /* ignore */ } }
+    const fire = (w) => {
+      try { w.dispatchEvent(new (w.Event || Event)("resize")); } catch (_e) { /* ignore */ }
+    };
+    fire(PAGE);
+    if (window !== PAGE) fire(window);
+  }
 
   function getReactFiber(node) {
     for (const k of Object.keys(node)) {
@@ -223,10 +263,28 @@
 
   function findMap() {
     if (looksLikeMap(cachedMap) && mapIsVisible(cachedMap)) return cachedMap;
-    const all = collectMaps();
-    const best = pickVisibleMap(all);
+    let best = pickVisibleMap(collectMaps());
+    if (best) return (cachedMap = best);
+    // Common on wandrer.earth: the map was created in a closure and is idle, so
+    // neither the constructor hook nor a repaint has captured it yet. Nudge it
+    // into a render and retry once synchronously.
+    nudgeMaps();
+    best = pickVisibleMap(collectMaps());
     if (best) return (cachedMap = best);
     return null;
+  }
+
+  // Async variant of findMap: nudge + retry a few times for maps that only get
+  // captured after a repaint settles (e.g. rAF-debounced resize). Used by the
+  // click handlers so the first Detect/Plan/Pick click finds an idle map.
+  async function ensureMap(retries = 6, delayMs = 200) {
+    let map = findMap();
+    for (let i = 0; i < retries && !map; i++) {
+      nudgeMaps();
+      await new Promise((r) => setTimeout(r, delayMs));
+      map = findMap();
+    }
+    return map;
   }
 
   // True if the map's canvas is attached and has a non-trivial on-screen size.
@@ -278,10 +336,13 @@
     const push = (m) => { if (looksLikeMap(m) && !out.includes(m)) out.push(m); };
 
     for (const g of [
+      PAGE.map, PAGE.__map,
+      PAGE.routeBuilder && PAGE.routeBuilder.map,
       window.map,
       window.__map,
       window.routeBuilder && window.routeBuilder.map,
       ...(window.__wrpMaps || []),
+      ...((PAGE.__wrpMaps && PAGE.__wrpMaps !== window.__wrpMaps) ? PAGE.__wrpMaps : []),
     ]) push(g);
 
     let nodes = [
@@ -310,6 +371,8 @@
     document.querySelectorAll(".mapboxgl-map, .mapboxgl-canvas, canvas").forEach(
       (n) => { if (getReactFiber(n)) withFiber++; }
     );
+    const mb = (PAGE && PAGE.mapboxgl) || window.mapboxgl;
+    const protoHooked = !!(mb && mb.Map && mb.Map.prototype && mb.Map.prototype.__wrpProtoHooked);
     // eslint-disable-next-line no-console
     console.log(
       "[WRP] map not found.",
@@ -317,8 +380,11 @@
       `mapboxgl-map containers=${containers.length}`,
       `nodes with React fiber=${withFiber}`,
       `hooked maps=${(window.__wrpMaps || []).length}`,
-      "\nTip: make sure the route builder map is visible, then retry. If counts",
-      "are all 0, the map may not be a Mapbox GL map or lives in a frame."
+      `mapboxgl global=${!!mb}`,
+      `proto hooked=${protoHooked}`,
+      "\nTip: make sure the map is visible, then retry. If 'mapboxgl global=false'",
+      "even via unsafeWindow, the map's Mapbox is bundled privately and can't be",
+      "hooked; if it's true but 'hooked maps=0', pan/zoom the map once and retry."
     );
   }
 
@@ -331,10 +397,12 @@
   const panel = document.createElement("div");
   panel.id = "wrp-panel";
   panel.style.cssText = [
-    "position:fixed", "top:90px", "right:16px", "z-index:99999",
+    "position:fixed", "top:90px", "right:16px", "bottom:auto", "z-index:99999",
     "background:#fff", "border:1px solid #ddd", "border-radius:10px",
     "box-shadow:0 4px 16px rgba(0,0,0,.15)", "padding:12px 14px",
     "font:13px/1.4 system-ui,sans-serif", "width:240px", "color:#222",
+    "height:auto", "max-height:calc(100vh - 24px)", "overflow-y:auto",
+    "box-sizing:border-box",
   ].join(";");
   // The "create in Strava" flow only exists where there is a route builder
   // (Strava). On wandrer.earth the Big Map is read-only, so we omit the section
@@ -343,7 +411,7 @@
     ? `
     <details style="margin:4px 0">
       <summary style="cursor:pointer;font-size:12px;color:#666">Advanced: draw in Strava</summary>
-      <button id="wrp-create" style="width:100%;margin:6px 0;padding:6px" disabled>Create in Strava (experimental)</button>
+      <button id="wrp-create" style="width:100%;margin:6px 0;padding:6px;background:#fff;color:#222;border:1px solid #ccc;border-radius:6px;cursor:pointer" disabled>Create in Strava (experimental)</button>
       <div style="font-size:11px;color:#999">Replays points into Strava's manual mode. Fragile against Strava UI changes — prefer GPX.</div>
     </details>`
     : "";
@@ -356,17 +424,27 @@
     <label style="display:block;margin:6px 0">Tolerance km
       <input id="wrp-tol" type="number" value="1" step="0.5" min="0"
              style="width:100%;box-sizing:border-box"></label>
-    <button id="wrp-pick" style="width:100%;margin:6px 0;padding:6px">Pick start on map</button>
+    <button id="wrp-pick" style="width:100%;margin:6px 0;padding:6px;background:#fff;color:#222;border:1px solid #ccc;border-radius:6px;cursor:pointer">Pick start on map</button>
     <input id="wrp-coords" type="text" placeholder="or paste: lat, lng"
            style="width:100%;box-sizing:border-box;margin:2px 0;padding:5px">
     <div id="wrp-start" style="color:#888;font-size:12px;margin:2px 0">start: (none)</div>
-    <button id="wrp-detect" style="width:100%;margin:6px 0;padding:6px">Detect overlay</button>
+    <button id="wrp-detect" style="width:100%;margin:6px 0;padding:6px;background:#fff;color:#222;border:1px solid #ccc;border-radius:6px;cursor:pointer">${SITE.id === "wandrer" ? "Detect travelled" : "Detect overlay"}</button>
     <button id="wrp-plan" style="width:100%;margin:6px 0;padding:6px;background:#fc4c02;color:#fff;border:none;border-radius:6px">Plan route</button>
     <button id="wrp-gpx" style="width:100%;margin:6px 0;padding:6px;background:#fc4c02;color:#fff;border:none;border-radius:6px" disabled>Download GPX</button>
     <div style="font-size:11px;color:#888;margin:2px 0 4px">Recommended: load the GPX on your watch, or import it (Strava subscribers: Routes → Upload a Route; Garmin/Komoot also work).</div>
     ${createSectionHtml}
     <div id="wrp-status" style="margin-top:6px;font-size:12px;color:#444"></div>
   `;
+  // Defensive styles: some host pages (e.g. wandrer.earth) ship aggressive
+  // global CSS that can stretch the panel to full height or strip button chrome.
+  // !important here pins the panel's box regardless of those rules.
+  const wrpStyle = document.createElement("style");
+  wrpStyle.textContent =
+    "#wrp-panel{height:auto!important;min-height:0!important;" +
+    "max-height:calc(100vh - 24px)!important;bottom:auto!important;" +
+    "overflow-y:auto!important;box-sizing:border-box!important;width:240px!important}" +
+    "#wrp-panel *{box-sizing:border-box}";
+  (document.head || document.documentElement).appendChild(wrpStyle);
   document.body.appendChild(panel);
 
   // Make the panel draggable by its title bar. Switches from right-anchored to
@@ -478,11 +556,12 @@
   // Mapbox canvas, so the click target is usually NOT the canvas. Capturing at
   // the document lets us intercept the click first, regardless of which child
   // was hit, then convert the pixel to lng/lat via map.unproject().
-  $("#wrp-pick").addEventListener("click", () => {
-    const map = findMap();
+  $("#wrp-pick").addEventListener("click", async () => {
+    setStatus("Looking for the map…");
+    const map = await ensureMap();
     if (!map) {
       logMapDiagnostics();
-      setStatus("Map not found — open the route builder (see console for details).");
+      setStatus("Map not found — make sure the map is visible (see console for details).");
       return;
     }
     const canvas = map.getCanvas ? map.getCanvas() : null;
@@ -801,11 +880,12 @@
     };
   }
 
-  function onDetect() {
-    const map = findMap();
+  async function onDetect() {
+    setStatus("Looking for the map…");
+    const map = await ensureMap();
     if (!map) {
       logMapDiagnostics();
-      return setStatus("Map not found — open the route builder (see console for details).");
+      return setStatus("Map not found — make sure the map is visible (see console for details).");
     }
     const { stats } = readTravelled(map);
     // Always log the full picture of every Wandrer source.
@@ -878,8 +958,9 @@
   }
 
   async function onPlan() {
-    const map = findMap();
-    if (!map) return setStatus("Map not found.");
+    setStatus("Looking for the map…");
+    const map = await ensureMap();
+    if (!map) { logMapDiagnostics(); return setStatus("Map not found — make sure the map is visible (see console)."); }
     // Honor coordinates typed into the paste field even if it wasn't blurred.
     applyPastedCoords();
     const start = startLatLng || (() => {
