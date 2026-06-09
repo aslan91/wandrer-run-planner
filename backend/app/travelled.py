@@ -19,6 +19,22 @@ def _cell(lat: float, lng: float) -> tuple[int, int]:
     return (round(lat / _CELL_DEG), round(lng / _CELL_DEG))
 
 
+def mark_travelled_by_osm_id(g: nx.Graph, osm_ids: set[int]) -> int:
+    """Set ``travelled=True`` on edges belonging to any travelled OSM way id.
+
+    This is exact (no geometric fuzz) because Wandrer tags each segment with its
+    OSM way id. Returns the number of edges marked.
+    """
+    if not osm_ids:
+        return 0
+    marked = 0
+    for _u, _v, data in g.edges(data=True):
+        if data.get("osm_ids") and not data["travelled"] and data["osm_ids"] & osm_ids:
+            data["travelled"] = True
+            marked += 1
+    return marked
+
+
 def mark_travelled(
     g: nx.Graph,
     travelled: list[list[tuple[float, float]]],

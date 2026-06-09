@@ -17,6 +17,10 @@ class PlanRequest(BaseModel):
     # from the Wandrer overlay tiles by the userscript. Optional: if omitted,
     # every path is treated as untravelled.
     travelled: list[list[tuple[float, float]]] = Field(default_factory=list)
+    # Exact travelled match: OSM way ids that Wandrer marks as travelled. When
+    # present these mark edges precisely (no geometric fuzz); polylines remain a
+    # fallback for any segment without an id match.
+    travelled_osm_ids: list[int] = Field(default_factory=list)
     # Number of randomized optimizer attempts (more = better but slower).
     attempts: int = Field(250, ge=1, le=5000)
     seed: int | None = None

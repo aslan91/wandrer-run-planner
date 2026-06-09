@@ -78,7 +78,8 @@ def fetch_overpass(lat: float, lng: float, radius_m: float, timeout: int = 60) -
 def build_graph(overpass_json: dict) -> nx.Graph:
     """Build an undirected graph: nodes = OSM nodes, edges = path segments.
 
-    Each edge carries ``length`` (metres) and ``travelled`` (bool, default False).
+    Each edge carries ``length`` (metres), ``travelled`` (bool, default False),
+    and ``osm_ids`` (set of OSM way ids that the segment belongs to).
     Each node carries ``xy`` = (lat, lng).
     """
     coords: dict[int, tuple[float, float]] = {}
@@ -96,6 +97,7 @@ def build_graph(overpass_json: dict) -> nx.Graph:
             continue
         if tags.get("foot") == "no" or tags.get("access") in {"private", "no"}:
             continue
+        way_id = way.get("id")
         node_ids = way.get("nodes", [])
         for a, b in zip(node_ids[:-1], node_ids[1:]):
             if a not in coords or b not in coords:
@@ -108,12 +110,16 @@ def build_graph(overpass_json: dict) -> nx.Graph:
                 g.add_node(a, xy=ca)
             if not g.has_node(b):
                 g.add_node(b, xy=cb)
-            # Keep the shorter edge if a duplicate way segment appears.
             if g.has_edge(a, b):
+                # Keep the shorter edge if a duplicate way segment appears, and
+                # remember every way id sharing this segment.
                 if length < g[a][b]["length"]:
                     g[a][b]["length"] = length
+                if way_id is not None:
+                    g[a][b]["osm_ids"].add(way_id)
             else:
-                g.add_edge(a, b, length=length, travelled=False)
+                osm_ids = {way_id} if way_id is not None else set()
+                g.add_edge(a, b, length=length, travelled=False, osm_ids=osm_ids)
     return g
 
 

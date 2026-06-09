@@ -18,6 +18,9 @@ def plan(req: PlanRequest) -> PlanResponse:
     if g.number_of_edges() == 0:
         raise ValueError("No runnable paths found near the start point.")
 
+    # Prefer exact OSM-id matching (Wandrer tags each segment with its OSM way
+    # id); fall back to geometric matching for anything not covered by ids.
+    travelled.mark_travelled_by_osm_id(g, set(req.travelled_osm_ids))
     travelled.mark_travelled(g, req.travelled)
 
     start_node = osm.nearest_node(g, req.start.lat, req.start.lng)

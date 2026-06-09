@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wandrer Run Planner
 // @namespace    https://github.com/aslan91/wandrer-run-planner
-// @version      0.3.0
+// @version      0.4.0
 // @description  Plan Strava runs that maximize untravelled (Wandrer red) paths within a target distance.
 // @match        https://www.strava.com/routes*
 // @match        https://www.strava.com/maps*
@@ -281,6 +281,7 @@
     let travelledCount = 0;
     const keys = new Set();
     const polylines = [];
+    const osmIds = new Set();
     const seen = new Set();
 
     for (const sl of layerArgs) {
@@ -300,6 +301,13 @@
         if (fid && seen.has(fid)) continue;
         if (fid) seen.add(fid);
         travelledCount++;
+        // Exact match key: Wandrer tags each segment with its OSM way id.
+        const props = f.properties || {};
+        const oid = props.osm_id_str ?? props.way_id ?? props.osm_id;
+        if (oid != null) {
+          const n = parseInt(oid, 10);
+          if (!Number.isNaN(n)) osmIds.add(n);
+        }
         for (const pl of geometryToPolylines(f.geometry)) {
           if (pl.length >= 2) polylines.push(pl);
         }
@@ -312,6 +320,7 @@
       travelled: travelledCount,
       keys: [...keys],
       polylines,
+      osmIds: [...osmIds],
       impliesTravelled: srcTravelled,
     };
   }
@@ -368,12 +377,14 @@
 
     return {
       travelled: chosen ? chosen.polylines : [],
+      travelledOsmIds: chosen ? chosen.osmIds : [],
       stats: {
         source: chosen ? chosen.id : null,
         sourceLayers: chosen ? chosen.sourceLayers : [],
         total: chosen ? chosen.total : 0,
         travelled: chosen ? chosen.travelled : 0,
         keys: chosen ? chosen.keys : [],
+        osmIdCount: chosen ? chosen.osmIds.length : 0,
         all: summary,
       },
     };
@@ -403,7 +414,8 @@
     const totalAll = (stats.all || []).reduce((n, s) => n + s.total, 0);
     setStatus(
       `Source "${stats.source}" — ${stats.travelled}/${stats.total} travelled ` +
-      `in view (${totalAll} features across ${stats.all.length} wandrer sources).` +
+      `in view (${stats.osmIdCount} OSM ids; ${totalAll} features across ` +
+      `${stats.all.length} wandrer sources).` +
       (totalAll === 0
         ? " No tiles loaded yet — zoom/pan over your run area and retry."
         : "")
@@ -455,7 +467,7 @@
     })();
 
     setStatus("Reading Wandrer overlay…");
-    const { travelled, stats } = readTravelled(map);
+    const { travelled, travelledOsmIds, stats } = readTravelled(map);
     if (!stats.source) {
       setStatus("Warning: no Wandrer overlay found — planning as if all paths are new.");
     }
@@ -467,6 +479,7 @@
         target_km: parseFloat($("#wrp-km").value),
         tolerance_km: parseFloat($("#wrp-tol").value),
         travelled,
+        travelled_osm_ids: travelledOsmIds || [],
       });
       drawRoute(map, res.coordinates);
       setStatus(
