@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wandrer Run Planner
 // @namespace    https://github.com/aslan91/wandrer-run-planner
-// @version      0.8.0
+// @version      0.8.1
 // @description  Plan Strava runs that maximize untravelled (Wandrer red) paths within a target distance.
 // @match        https://www.strava.com/routes*
 // @match        https://www.strava.com/maps*
@@ -710,7 +710,6 @@
         new MouseEvent(type, {
           bubbles: true,
           cancelable: true,
-          view: window,
           clientX,
           clientY,
           button: 0,
