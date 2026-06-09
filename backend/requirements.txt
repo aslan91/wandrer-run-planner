@@ -1,0 +1,7 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+requests>=2.31
+networkx>=3.2
+gpxpy>=1.6
+pydantic>=2.6
+truststore>=0.9
