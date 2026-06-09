@@ -22,14 +22,12 @@ route + GPX + waypoints  ──▶  drawn / created back in Strava
 
 Wandrer has already connected to your Strava and computed, per road/path
 segment, whether you have travelled it. We **reuse that result** instead of
-re-deriving it from raw Strava activities. The userscript runs inside your
-authenticated Strava session, so it can read the same Wandrer tiles the overlay
-draws and pass that "travelled" geometry to the backend. The backend is
-source‑agnostic — it just needs OSM edges + a set of travelled polylines — so a
-Strava-activity-derived provider can be swapped in later if needed.
-
-The route planning itself is a budget‑constrained **arc‑routing / orienteering**
-problem (NP‑hard), solved here with a fast randomized heuristic.
+re-deriving it from raw Strava activities. The Wandrer overlay is a vector
+source already loaded into Strava's Mapbox GL map, so the userscript reads its
+features straight off the **live map** (`querySourceFeatures`) and passes the
+travelled geometry to the backend — no tile refetching or MVT decoding needed.
+The backend is source‑agnostic (it just needs OSM edges + travelled polylines),
+so a Strava-activity-derived provider can be swapped in later if needed.
 
 ## Components
 
@@ -60,19 +58,26 @@ Install [Tampermonkey](https://www.tampermonkey.net/), then add
 `userscript/wandrer-run-planner.user.js`. Open the Strava route builder; a
 **Wandrer Run Planner** panel appears.
 
-### One-time: capture the Wandrer tile endpoint
+### One-time: confirm the overlay is detected
 
-The Wandrer overlay is a premium feature whose tile URL is not public, so we read
-it from your own browser:
+The userscript reads the Wandrer overlay directly from the live map. To confirm
+it finds your overlay:
 
 1. Open the Strava route builder with the Wandrer overlay enabled.
-2. DevTools → **Network** → filter `wandrer` (or `.pbf` / `.mvt`).
-3. Copy the request URL template (look for `{z}/{x}/{y}`) and the property name
-   that marks a segment as travelled.
-4. Paste both into the `WANDRER` config block at the top of the userscript.
+2. In the panel, click **Detect overlay**.
+3. The status line reports the matched source, how many segments in view are
+   travelled, and the available feature property keys.
+4. If travelled count is 0 but you know you've run there, open the browser
+   console and check which property marks travelled, then add its name to
+   `WANDRER.TRAVELLED_KEYS` at the top of the userscript. If no source is
+   found, adjust `WANDRER.SOURCE_MATCH` (console logs the available source ids).
 
-Until that is filled in, the planner treats **all** paths as untravelled, which
-still produces a valid (just not Wandrer-aware) route.
+Until a source is detected, the planner treats **all** paths as untravelled,
+which still produces a valid (just not Wandrer-aware) route.
+
+> Note: `querySourceFeatures` only sees tiles currently loaded in the map view,
+> so keep the planning area within the visible map (zoom to roughly the run
+> area before planning).
 
 ## Status
 
@@ -81,8 +86,8 @@ still produces a valid (just not Wandrer-aware) route.
 - [x] GPX export + route simplification to Strava waypoints
 - [x] FastAPI `/plan` endpoint (CORS for strava.com)
 - [x] CLI for browser-free testing
-- [x] Userscript skeleton: panel, pick-start, plan, draw route
-- [ ] Live Wandrer tile endpoint wired in (capture from DevTools)
+- [x] Userscript: panel, pick-start, plan, draw route
+- [x] Live Wandrer overlay read via `querySourceFeatures` + auto-detect
 - [ ] "Create route in Strava" via builder save endpoint
 
 This is a private project. Not affiliated with Strava or Wandrer.

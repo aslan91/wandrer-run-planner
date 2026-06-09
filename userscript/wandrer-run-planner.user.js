@@ -19,17 +19,28 @@
   // ----------------------------------------------------------------------
   const BACKEND = "http://localhost:8000/plan";
 
-  // Wandrer overlay tile source. Capture these from DevTools -> Network while
-  // the Wandrer overlay is active (filter ".pbf" / ".mvt" / "wandrer"):
-  //   - URL_TEMPLATE: the tile URL with {z}/{x}/{y} placeholders
-  //   - TRAVELLED_PROP: the vector-tile feature property that is truthy when a
-  //     segment has been travelled (e.g. "traveled", "achieved", "v")
-  // Until filled in, the planner treats every path as untravelled.
+  // The Wandrer overlay is a vector source already loaded into Strava's Mapbox
+  // GL map, so we read its features straight off the live map instead of
+  // refetching/decoding tiles. These knobs control detection:
   const WANDRER = {
-    URL_TEMPLATE: "", // e.g. "https://tiles.wandrer.earth/.../{z}/{x}/{y}.pbf?token=..."
-    TRAVELLED_PROP: "traveled",
-    enabled: false,
+    // A source is considered the Wandrer overlay if its id or tile URLs match.
+    SOURCE_MATCH: /wandrer/i,
+    // A feature counts as travelled if any of these properties is truthy
+    // (Wandrer uses US spelling). Adjust after running "Detect overlay".
+    TRAVELLED_KEYS: ["traveled", "travelled", "achieved", "done", "v"],
+    // Optional manual override if auto-detection picks the wrong source.
+    FORCE_SOURCE_ID: "",
   };
+
+  // Is a feature's property bag marked travelled?
+  function isTravelled(props) {
+    if (!props) return false;
+    for (const k of WANDRER.TRAVELLED_KEYS) {
+      const val = props[k];
+      if (val === true || val === 1 || val === "1" || val === "true") return true;
+    }
+    return false;
+  }
 
   // ----------------------------------------------------------------------
   // Find the Strava Mapbox GL map instance.
@@ -80,6 +91,7 @@
              style="width:100%;box-sizing:border-box"></label>
     <button id="wrp-pick" style="width:100%;margin:6px 0;padding:6px">Pick start on map</button>
     <div id="wrp-start" style="color:#888;font-size:12px;margin:2px 0">start: (none)</div>
+    <button id="wrp-detect" style="width:100%;margin:6px 0;padding:6px">Detect overlay</button>
     <button id="wrp-plan" style="width:100%;margin:6px 0;padding:6px;background:#fc4c02;color:#fff;border:none;border-radius:6px">Plan route</button>
     <div id="wrp-status" style="margin-top:6px;font-size:12px;color:#444"></div>
   `;
@@ -107,18 +119,125 @@
   });
 
   $("#wrp-plan").addEventListener("click", onPlan);
+  $("#wrp-detect").addEventListener("click", onDetect);
 
   // ----------------------------------------------------------------------
-  // Read travelled geometry from the Wandrer overlay (placeholder).
-  // Once WANDRER is configured, fetch the vector tiles covering the current
-  // map bounds, decode them, and return travelled polylines as [[lat,lng],...].
+  // Locate the Wandrer vector source + its source-layers within the live
+  // Mapbox GL style.
   // ----------------------------------------------------------------------
-  async function readTravelled(/* map */) {
-    if (!WANDRER.enabled || !WANDRER.URL_TEMPLATE) return [];
-    // TODO: fetch tiles for current bounds, decode MVT (e.g. @mapbox/vector-tile),
-    // keep features where feature.properties[WANDRER.TRAVELLED_PROP] is truthy,
-    // convert their geometry to [lat,lng] polylines.
+  function findWandrerSource(map) {
+    const style = map.getStyle && map.getStyle();
+    if (!style || !style.sources) return null;
+
+    if (WANDRER.FORCE_SOURCE_ID && style.sources[WANDRER.FORCE_SOURCE_ID]) {
+      return collectSourceLayers(style, WANDRER.FORCE_SOURCE_ID);
+    }
+    for (const [id, src] of Object.entries(style.sources)) {
+      const hay = JSON.stringify(src) + " " + id;
+      if (WANDRER.SOURCE_MATCH.test(hay)) {
+        return collectSourceLayers(style, id);
+      }
+    }
+    return null;
+  }
+
+  function collectSourceLayers(style, sourceId) {
+    const sourceLayers = new Set();
+    for (const layer of style.layers || []) {
+      if (layer.source === sourceId && layer["source-layer"]) {
+        sourceLayers.add(layer["source-layer"]);
+      }
+    }
+    // Vector sources need a source-layer; if none referenced, try empty (some
+    // styles let querySourceFeatures work without it).
+    return { sourceId, sourceLayers: [...sourceLayers] };
+  }
+
+  // Convert a GeoJSON geometry (lng/lat) into [lat,lng] polylines.
+  function geometryToPolylines(geom) {
+    if (!geom) return [];
+    if (geom.type === "LineString") {
+      return [geom.coordinates.map(([ln, la]) => [la, ln])];
+    }
+    if (geom.type === "MultiLineString") {
+      return geom.coordinates.map((line) => line.map(([ln, la]) => [la, ln]));
+    }
     return [];
+  }
+
+  // ----------------------------------------------------------------------
+  // Read travelled geometry directly from the live Wandrer overlay source.
+  // Returns { travelled: [[ [lat,lng], ... ], ...], stats }.
+  // ----------------------------------------------------------------------
+  function readTravelled(map) {
+    const found = findWandrerSource(map);
+    if (!found) {
+      return { travelled: [], stats: { source: null } };
+    }
+    const { sourceId, sourceLayers } = found;
+    const layerArgs = sourceLayers.length ? sourceLayers : [undefined];
+
+    let total = 0;
+    let travelledCount = 0;
+    const sampleKeys = new Set();
+    const polylines = [];
+    const seen = new Set();
+
+    for (const sl of layerArgs) {
+      let feats = [];
+      try {
+        feats = map.querySourceFeatures(sourceId, sl ? { sourceLayer: sl } : {});
+      } catch (_e) {
+        continue;
+      }
+      for (const f of feats) {
+        total++;
+        Object.keys(f.properties || {}).forEach((k) => sampleKeys.add(k));
+        if (!isTravelled(f.properties)) continue;
+        // Deduplicate features split across tiles by id when available.
+        const fid = f.id != null ? `${sl}:${f.id}` : null;
+        if (fid && seen.has(fid)) continue;
+        if (fid) seen.add(fid);
+        travelledCount++;
+        for (const pl of geometryToPolylines(f.geometry)) {
+          if (pl.length >= 2) polylines.push(pl);
+        }
+      }
+    }
+
+    return {
+      travelled: polylines,
+      stats: {
+        source: sourceId,
+        sourceLayers,
+        total,
+        travelled: travelledCount,
+        keys: [...sampleKeys],
+      },
+    };
+  }
+
+  function onDetect() {
+    const map = findMap();
+    if (!map) return setStatus("Map not found — open the route builder.");
+    const { stats } = readTravelled(map);
+    if (!stats.source) {
+      setStatus(
+        "No Wandrer source found. Ensure the overlay is ON, then check " +
+        "SOURCE_MATCH. Open the console for available source ids."
+      );
+      try {
+        // eslint-disable-next-line no-console
+        console.log("[WRP] sources:", Object.keys(map.getStyle().sources));
+      } catch (_e) { /* ignore */ }
+      return;
+    }
+    setStatus(
+      `Source "${stats.source}" — ${stats.travelled}/${stats.total} travelled ` +
+      `in view. Property keys: ${stats.keys.join(", ") || "(none)"}.`
+    );
+    // eslint-disable-next-line no-console
+    console.log("[WRP] detect:", stats);
   }
 
   function postPlan(body) {
@@ -164,7 +283,10 @@
     })();
 
     setStatus("Reading Wandrer overlay…");
-    const travelled = await readTravelled(map).catch(() => []);
+    const { travelled, stats } = readTravelled(map);
+    if (!stats.source) {
+      setStatus("Warning: no Wandrer overlay found — planning as if all paths are new.");
+    }
 
     setStatus("Planning… (this can take a few seconds)");
     try {
