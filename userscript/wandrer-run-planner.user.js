@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         Wandrer Run Planner
 // @namespace    https://github.com/aslan91/wandrer-run-planner
-// @version      0.12.0
-// @description  Plan Strava runs that maximize untravelled (Wandrer red) paths within a target distance.
+// @version      0.13.0
+// @description  Plan runs that maximize untravelled (Wandrer red) paths within a target distance. Reads travelled data natively on wandrer.earth's Big Map, or from the Wandrer overlay on Strava's route builder.
 // @match        https://www.strava.com/routes*
 // @match        https://www.strava.com/maps*
 // @match        https://www.strava.com/athlete/maps*
+// @match        https://wandrer.earth/dashboard/my_places_iframe/*
 // @homepageURL  https://github.com/aslan91/wandrer-run-planner
 // @supportURL   https://github.com/aslan91/wandrer-run-planner/issues
 // @updateURL    https://raw.githubusercontent.com/aslan91/wandrer-run-planner/main/userscript/wandrer-run-planner.user.js
@@ -26,25 +27,77 @@
   // IPv6 ::1 first, but uvicorn binds IPv4 127.0.0.1 only -> connection refused.
   const BACKEND = "http://127.0.0.1:8000/plan";
 
-  // The Wandrer overlay is a vector source already loaded into Strava's Mapbox
-  // GL map, so we read its features straight off the live map instead of
-  // refetching/decoding tiles. These knobs control detection:
-  const WANDRER = {
-    // A source is considered a Wandrer overlay if its id or tile URLs match.
-    SOURCE_MATCH: /wandrer/i,
-    // Prefer sources for this activity when several Wandrer sources exist.
-    ACTIVITY_MATCH: /run|foot|walk|hike/i,
-    // Wandrer splits travelled vs untravelled into separate sources/layers, so
-    // a source/source-layer whose name implies "travelled" means EVERY feature
-    // in it is travelled (no per-feature property needed).
-    TRAVELLED_NAME: /travel/i,
-    UNTRAVELLED_NAME: /untravel|not.?travel|undone|missing/i,
-    // Fallback only: if a source is NOT split by name, a feature counts as
-    // travelled when any of these properties is truthy.
-    TRAVELLED_KEYS: ["traveled", "travelled", "achieved", "done", "v"],
-    // Optional manual override if auto-detection picks the wrong source.
-    FORCE_SOURCE_ID: "",
+  // ----------------------------------------------------------------------
+  // Site adapters
+  //
+  // The planner reads "travelled" geometry off a live Mapbox GL map. The two
+  // supported sites expose that data differently, so a per-site adapter isolates
+  // the only differences; everything else (map discovery, planning, GPX export)
+  // is shared.
+  //
+  //  - strava : the Wandrer *overlay* browser extension injects vector sources
+  //             into Strava's route-builder map. Sources are auto-detected by
+  //             regex and travelled is inferred from source/layer name or
+  //             per-feature properties. Strava's route builder additionally lets
+  //             us create the planned route directly (manual-mode replay).
+  //  - wandrer: wandrer.earth's own Big Map (a same-origin iframe) is the
+  //             canonical data source. Travelled-on-foot lives entirely in known
+  //             source/source-layer pairs, each feature tagged with its OSM way
+  //             id (osm_id_str). There is no route builder, so GPX export only.
+  // ----------------------------------------------------------------------
+  const ADAPTERS = {
+    strava: {
+      id: "strava",
+      siteName: "Strava",
+      canCreate: true,
+      // Overlay auto-detection knobs (Wandrer extension on Strava's map).
+      overlay: {
+        // A source is considered a Wandrer overlay if its id or tile URLs match.
+        SOURCE_MATCH: /wandrer/i,
+        // Prefer sources for this activity when several Wandrer sources exist.
+        ACTIVITY_MATCH: /run|foot|walk|hike/i,
+        // Wandrer splits travelled vs untravelled into separate sources/layers,
+        // so a source/source-layer whose name implies "travelled" means EVERY
+        // feature in it is travelled (no per-feature property needed).
+        TRAVELLED_NAME: /travel/i,
+        UNTRAVELLED_NAME: /untravel|not.?travel|undone|missing/i,
+        // Fallback only: if a source is NOT split by name, a feature counts as
+        // travelled when any of these properties is truthy.
+        TRAVELLED_KEYS: ["traveled", "travelled", "achieved", "done", "v"],
+        // Optional manual override if auto-detection picks the wrong source.
+        FORCE_SOURCE_ID: "",
+      },
+    },
+    wandrer: {
+      id: "wandrer",
+      siteName: "Wandrer",
+      canCreate: false,
+      // Native source list (ordered by preference). Every feature in these
+      // source/source-layer pairs is travelled-on-foot. `osm_id_str` is the real
+      // OSM way id; `way_id` is a Wandrer-internal composite ("47a…/47a…/0") and
+      // must NOT be parsed as an OSM id.
+      native: {
+        TRAVELLED_SOURCES: [
+          { source: "foot-source", sourceLayer: "se" },
+          { source: "combined-foot-source", sourceLayer: "se" },
+        ],
+        OSM_ID_KEYS: ["osm_id_str", "osm_id"],
+      },
+    },
   };
+
+  // Pick the adapter for the current site. The wandrer adapter runs inside the
+  // Big Map iframe (host wandrer.earth); everything else defaults to Strava.
+  function detectSite() {
+    if (/(^|\.)wandrer\.earth$/i.test(location.hostname)) return ADAPTERS.wandrer;
+    return ADAPTERS.strava;
+  }
+  const SITE = detectSite();
+
+  // Active overlay-detection config for the Strava read path. Unused on wandrer
+  // (which reads explicit native sources) but kept defined so the shared
+  // overlay helpers below always have a config to reference.
+  const WANDRER = SITE.overlay || ADAPTERS.strava.overlay;
 
   // Does a source/source-layer NAME imply its features are travelled?
   function nameImpliesTravelled(name) {
@@ -89,12 +142,33 @@
   // captured. Only works when mapboxgl is exposed globally; harmless otherwise.
   (function hookMapboxCtor() {
     window.__wrpMaps = window.__wrpMaps || [];
+    const remember = (m) => {
+      try { if (looksLikeMap(m) && !window.__wrpMaps.includes(m)) window.__wrpMaps.push(m); }
+      catch (_e) { /* ignore */ }
+    };
+    // Patch the prototype render loop so an ALREADY-created map (one made in a
+    // closure before our hook ran — e.g. wandrer.earth's iframe map) is still
+    // captured: it records `this` the first time the map paints. This is the
+    // timing-independent capture that the constructor hook alone can miss.
+    function patchMapProto(MapCtor) {
+      const proto = MapCtor && MapCtor.prototype;
+      if (!proto || proto.__wrpProtoHooked) return;
+      for (const name of ["_render", "triggerRepaint", "resize"]) {
+        const orig = proto[name];
+        if (typeof orig !== "function") continue;
+        const wrapped = function (...a) { remember(this); return orig.apply(this, a); };
+        try { proto[name] = wrapped; } catch (_e) { /* ignore */ }
+      }
+      try { proto.__wrpProtoHooked = true; } catch (_e) { /* ignore */ }
+    }
     function wrap(mb) {
-      if (!mb || !mb.Map || mb.Map.__wrpHooked) return;
+      if (!mb || !mb.Map) return;
+      patchMapProto(mb.Map);
+      if (mb.Map.__wrpHooked) return;
       const Orig = mb.Map;
       function Wrapped(...args) {
         const m = new Orig(...args);
-        try { window.__wrpMaps.push(m); } catch (_e) { /* ignore */ }
+        remember(m);
         return m;
       }
       Wrapped.prototype = Orig.prototype;
@@ -262,8 +336,20 @@
     "box-shadow:0 4px 16px rgba(0,0,0,.15)", "padding:12px 14px",
     "font:13px/1.4 system-ui,sans-serif", "width:240px", "color:#222",
   ].join(";");
+  // The "create in Strava" flow only exists where there is a route builder
+  // (Strava). On wandrer.earth the Big Map is read-only, so we omit the section
+  // entirely and the planned route is used via GPX export.
+  const createSectionHtml = SITE.canCreate
+    ? `
+    <details style="margin:4px 0">
+      <summary style="cursor:pointer;font-size:12px;color:#666">Advanced: draw in Strava</summary>
+      <button id="wrp-create" style="width:100%;margin:6px 0;padding:6px" disabled>Create in Strava (experimental)</button>
+      <div style="font-size:11px;color:#999">Replays points into Strava's manual mode. Fragile against Strava UI changes — prefer GPX.</div>
+    </details>`
+    : "";
+
   panel.innerHTML = `
-    <div id="wrp-drag" style="font-weight:600;margin:-12px -14px 8px;padding:10px 14px 8px;cursor:move;user-select:none;border-bottom:1px solid #eee;border-radius:10px 10px 0 0">Wandrer Run Planner</div>
+    <div id="wrp-drag" style="font-weight:600;margin:-12px -14px 8px;padding:10px 14px 8px;cursor:move;user-select:none;border-bottom:1px solid #eee;border-radius:10px 10px 0 0">Wandrer Run Planner <span style="font-weight:400;font-size:11px;color:#888">· ${SITE.siteName}</span></div>
     <label style="display:block;margin:6px 0">Target km
       <input id="wrp-km" type="number" value="6" step="0.5" min="1"
              style="width:100%;box-sizing:border-box"></label>
@@ -278,11 +364,7 @@
     <button id="wrp-plan" style="width:100%;margin:6px 0;padding:6px;background:#fc4c02;color:#fff;border:none;border-radius:6px">Plan route</button>
     <button id="wrp-gpx" style="width:100%;margin:6px 0;padding:6px;background:#fc4c02;color:#fff;border:none;border-radius:6px" disabled>Download GPX</button>
     <div style="font-size:11px;color:#888;margin:2px 0 4px">Recommended: load the GPX on your watch, or import it (Strava subscribers: Routes → Upload a Route; Garmin/Komoot also work).</div>
-    <details style="margin:4px 0">
-      <summary style="cursor:pointer;font-size:12px;color:#666">Advanced: draw in Strava</summary>
-      <button id="wrp-create" style="width:100%;margin:6px 0;padding:6px" disabled>Create in Strava (experimental)</button>
-      <div style="font-size:11px;color:#999">Replays points into Strava's manual mode. Fragile against Strava UI changes — prefer GPX.</div>
-    </details>
+    ${createSectionHtml}
     <div id="wrp-status" style="margin-top:6px;font-size:12px;color:#444"></div>
   `;
   document.body.appendChild(panel);
@@ -491,7 +573,8 @@
 
   $("#wrp-plan").addEventListener("click", guard(onPlan));
   $("#wrp-detect").addEventListener("click", onDetect);
-  $("#wrp-create").addEventListener("click", guard(onCreate));
+  const createBtn = $("#wrp-create");
+  if (createBtn) createBtn.addEventListener("click", guard(onCreate));
   $("#wrp-gpx").addEventListener("click", onDownloadGpx);
 
   // ----------------------------------------------------------------------
@@ -585,12 +668,93 @@
   }
 
   // ----------------------------------------------------------------------
-  // Read travelled geometry directly from the live Wandrer overlay sources.
-  // Enumerates all Wandrer sources, probes each, and chooses the best
-  // "travelled" source (preferring the configured activity + most features).
-  // Returns { travelled: [[ [lat,lng], ... ], ...], stats }.
+  // Read travelled geometry off the live map. Dispatches to the active site's
+  // reader. Returns { travelled: [[ [lat,lng], ... ], ...], travelledOsmIds,
+  // stats } in both cases so onPlan/onDetect are site-agnostic.
   // ----------------------------------------------------------------------
   function readTravelled(map) {
+    return SITE.id === "wandrer"
+      ? readTravelledNative(map)
+      : readTravelledOverlay(map);
+  }
+
+  // Native wandrer.earth Big Map: travelled-on-foot lives entirely in known
+  // source/source-layer pairs (every feature is travelled). Read them directly
+  // and prefer exact OSM-id matching via osm_id_str.
+  function readTravelledNative(map) {
+    const style = map.getStyle && map.getStyle();
+    const cfg = SITE.native;
+    const empty = { travelled: [], travelledOsmIds: [], stats: { source: null, all: [] } };
+    if (!style || !style.sources) return empty;
+
+    const summary = [];
+    let chosen = null;
+    for (const { source, sourceLayer } of cfg.TRAVELLED_SOURCES) {
+      if (!style.sources[source]) continue;
+      let feats = [];
+      try {
+        feats = map.querySourceFeatures(source, sourceLayer ? { sourceLayer } : {});
+      } catch (_e) {
+        continue;
+      }
+      const polylines = [];
+      const osmIds = new Set();
+      const keys = new Set();
+      const seen = new Set();
+      for (const f of feats) {
+        Object.keys(f.properties || {}).forEach((k) => keys.add(k));
+        const fid = f.id != null ? `${sourceLayer}:${f.id}` : null;
+        if (fid && seen.has(fid)) continue;
+        if (fid) seen.add(fid);
+        // Exact match key: osm_id_str is the OSM way id. Do NOT use way_id here
+        // (it is a Wandrer composite id, not numeric OSM).
+        const props = f.properties || {};
+        for (const key of cfg.OSM_ID_KEYS) {
+          const oid = props[key];
+          if (oid != null) {
+            const n = parseInt(oid, 10);
+            if (!Number.isNaN(n)) { osmIds.add(n); break; }
+          }
+        }
+        for (const pl of geometryToPolylines(f.geometry)) {
+          if (pl.length >= 2) polylines.push(pl);
+        }
+      }
+      const entry = {
+        id: source, sourceLayers: [sourceLayer], total: feats.length,
+        travelled: feats.length, keys: [...keys], polylines,
+        osmIds: [...osmIds], impliesTravelled: true,
+      };
+      summary.push({
+        id: entry.id, total: entry.total, travelled: entry.travelled,
+        keys: entry.keys, sourceLayers: entry.sourceLayers, impliesTravelled: true,
+      });
+      if (!chosen && feats.length > 0) chosen = entry;
+    }
+    if (!chosen) {
+      return { travelled: [], travelledOsmIds: [], stats: { source: null, all: summary } };
+    }
+    return {
+      travelled: chosen.polylines,
+      travelledOsmIds: chosen.osmIds,
+      stats: {
+        source: chosen.id,
+        sourceLayers: chosen.sourceLayers,
+        total: chosen.total,
+        travelled: chosen.travelled,
+        keys: chosen.keys,
+        osmIdCount: chosen.osmIds.length,
+        all: summary,
+      },
+    };
+  }
+
+  // ----------------------------------------------------------------------
+  // Strava overlay path: enumerate all Wandrer overlay sources, probe each, and
+  // choose the best "travelled" source (preferring the configured activity +
+  // most features). Returns { travelled, travelledOsmIds, stats }.
+  // ----------------------------------------------------------------------
+  function readTravelledOverlay(map) {
     let sources = getWandrerSources(map);
     if (WANDRER.FORCE_SOURCE_ID) {
       sources = sources.filter((s) => s.id === WANDRER.FORCE_SOURCE_ID);
@@ -746,7 +910,8 @@
       );
       // Stash for create-in-Strava / GPX download and enable those buttons.
       window.__wrpLast = res;
-      $("#wrp-create").disabled = false;
+      const createEl = $("#wrp-create");
+      if (createEl) createEl.disabled = false;
       $("#wrp-gpx").disabled = false;
     } catch (err) {
       setStatus("Error: " + err.message);

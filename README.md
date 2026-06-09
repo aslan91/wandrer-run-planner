@@ -4,33 +4,43 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Plan running routes that **maximize coverage of untravelled paths** (the red
-segments in the [Wandrer](https://wandrer.earth/) overlay) within a target
-distance, while reusing already‑run (green) paths and repeating segments only
-when necessary.
+segments on [Wandrer](https://wandrer.earth/)) within a target distance, while
+reusing already‑run (green) paths and repeating segments only when necessary.
 
-It is built around the workflow you already use: the Strava **route builder**
-with the *Wandrer Map Overlay* extension active.
+The userscript runs on **two** sites:
+
+- **wandrer.earth** — its **Big Map** is the *primary, canonical* source of your
+  travelled data. Pick a start, plan, and download a GPX. (Recommended.)
+- **strava.com** — the **route builder** with the *Wandrer Map Overlay*
+  extension active. Everything above, **plus** an optional "create the route
+  directly in Strava" step (Wandrer has no route builder).
 
 ```
-Strava route builder (+ Wandrer overlay)
-        │  userscript: pick start on map, read travelled tiles
-        ▼
-Local Python backend  ──Overpass──▶ OSM path network
-        │  arc-routing optimizer (maximize untravelled, minimize repeats)
-        ▼
-route + GPX + waypoints  ──▶  drawn / created back in Strava
+wandrer.earth Big Map        OR        Strava route builder (+ Wandrer overlay)
+   │  read native travelled                │  read overlay travelled
+   ▼                                        ▼
+      Local Python backend  ──Overpass──▶ OSM path network
+              │  arc-routing optimizer (maximize untravelled, minimize repeats)
+              ▼
+      route + GPX (+ optional draw-in-Strava)
 ```
 
 ## Why this design
 
-Wandrer has already connected to your Strava and computed, per road/path
-segment, whether you have travelled it. We **reuse that result** instead of
-re-deriving it from raw Strava activities. The Wandrer overlay is a vector
-source already loaded into Strava's Mapbox GL map, so the userscript reads its
-features straight off the **live map** (`querySourceFeatures`) and passes the
-travelled geometry to the backend — no tile refetching or MVT decoding needed.
+Wandrer has already connected to your Strava/Garmin/RideWithGPS and computed,
+per road/path segment, whether you have travelled it. We **reuse that result**
+instead of re-deriving it from raw activities. That travelled data is a vector
+source on a Mapbox GL map, so the userscript reads its features straight off the
+**live map** (`querySourceFeatures`) and passes the travelled geometry to the
+backend — no tile refetching or MVT decoding needed.
+
+The most reliable place to read it is **wandrer.earth's own Big Map**, where the
+data is native (no dependency on the overlay extension being injected
+elsewhere), tagged with exact OSM way ids (`osm_id_str`) for precise matching.
+Strava is supported too because it adds one thing Wandrer lacks — a **route
+builder** — so you can optionally draw the planned route straight into Strava.
 The backend is source‑agnostic (it just needs OSM edges + travelled polylines),
-so a Strava-activity-derived provider can be swapped in later if needed.
+so either site feeds the same pipeline.
 
 ## Components
 
@@ -38,7 +48,7 @@ so a Strava-activity-derived provider can be swapped in later if needed.
 |------|------|
 | `backend/` | FastAPI service + optimizer + Overpass client + GPX export |
 | `backend/app/cli.py` | Run the full pipeline from the command line (no browser needed) |
-| `userscript/wandrer-run-planner.user.js` | Tampermonkey script: in‑Strava UI |
+| `userscript/wandrer-run-planner.user.js` | Tampermonkey script: in‑page UI on wandrer.earth's Big Map and Strava's route builder |
 
 ## Quick start (backend)
 
@@ -70,23 +80,26 @@ up to date automatically):
 
 Alternatively, open `userscript/wandrer-run-planner.user.js` and paste its
 contents into a new userscript. The backend must be running locally (see
-*Quick start* above) for planning to work. Open the Strava route builder; a
-**Wandrer Run Planner** panel appears (drag it by its title bar to reposition;
-the position is remembered).
+*Quick start* above) for planning to work. Open either **wandrer.earth → Big
+Map** or the **Strava route builder**; a **Wandrer Run Planner** panel appears
+(drag it by its title bar to reposition; the position is remembered). The panel
+title shows which site you're on.
 
-### One-time: confirm the overlay is detected
+### One-time: confirm travelled data is detected
 
-The userscript reads the Wandrer overlay directly from the live map. To confirm
-it finds your overlay:
+The userscript reads travelled segments directly from the live map. To confirm
+it finds your data:
 
-1. Open the Strava route builder with the Wandrer overlay enabled.
+1. Open **wandrer.earth → Big Map**, or the Strava route builder with the
+   Wandrer overlay enabled.
 2. In the panel, click **Detect overlay**.
 3. The status line reports the matched source, how many segments in view are
-   travelled, and the available feature property keys.
-4. If travelled count is 0 but you know you've run there, open the browser
-   console and check which property marks travelled, then add its name to
-   `WANDRER.TRAVELLED_KEYS` at the top of the userscript. If no source is
-   found, adjust `WANDRER.SOURCE_MATCH` (console logs the available source ids).
+   travelled, the number of OSM ids found, and the available property keys.
+4. If travelled count is 0 but you know you've run there, zoom/pan so the area
+   is in view and retry (only loaded tiles are readable). On Strava, if a source
+   still isn't found you can tune `ADAPTERS.strava.overlay` at the top of the
+   userscript (the console logs the available source ids). On wandrer.earth the
+   travelled sources are fixed in `ADAPTERS.wandrer.native`.
 
 Until a source is detected, the planner treats **all** paths as untravelled,
 which still produces a valid (just not Wandrer-aware) route.
@@ -97,33 +110,35 @@ which still produces a valid (just not Wandrer-aware) route.
 
 ### Using a planned route
 
-After **Plan route**, the panel offers two ways to use the result:
+After **Plan route**, use the result via:
 
-1. **Download GPX (recommended).** One click writes a GPX with both a `<trk>`
-   and a `<rte>` plus metadata, named
+1. **Download GPX (recommended, both sites).** One click writes a GPX with both
+   a `<trk>` and a `<rte>` plus metadata, named
    `wandrer-run-<date>-<km>km.gpx`. This is the reliable, exact path: load it
    straight onto a watch (Garmin, COROS, …) or import it into a mapping app.
    Strava subscribers can import it via **Dashboard → Routes → Upload a Route**.
    Because browsers don't let a script choose a file in another site's upload
    dialog (and Strava has no public route-creation API), the file pick itself is
    the one manual step — everything up to it is automated.
-2. **Create in Strava (experimental).** Hidden under *Advanced*. Replays the
-   route into Strava's *manual mode* by synthesizing map clicks. It needs no
-   file import but depends on Strava's current DOM/UI, so it can break when
-   Strava changes their builder. Prefer the GPX path; use this only if you want
-   the route drawn directly in the open builder.
+2. **Create in Strava (experimental, Strava only).** Hidden under *Advanced*,
+   and shown only on strava.com. Replays the route into Strava's *manual mode*
+   by synthesizing map clicks. It needs no file import but depends on Strava's
+   current DOM/UI, so it can break when Strava changes their builder. Prefer the
+   GPX path; use this only if you want the route drawn directly in the open
+   builder.
 
 ## Status
 
 - [x] Overpass fetch + walkable graph build
 - [x] Randomized budget-constrained optimizer (max untravelled, min repeats)
 - [x] GPX export (`<trk>` + metadata) + waypoint simplification
-- [x] FastAPI `/plan` endpoint (CORS for strava.com)
+- [x] FastAPI `/plan` endpoint (CORS for strava.com + wandrer.earth)
 - [x] CLI for browser-free testing
 - [x] Userscript: panel, pick-start (map or paste lat,lng), plan, draw route
-- [x] Live Wandrer overlay read via `querySourceFeatures` + auto-detect
+- [x] Live travelled read via `querySourceFeatures` (per-site adapter)
+- [x] **Native wandrer.earth Big Map support** (primary source; exact OSM ids)
 - [x] **Primary export: one-click GPX** (watch / mapping app / Strava route upload)
-- [x] Experimental "Create in Strava" via manual-mode point replay
+- [x] Experimental "Create in Strava" via manual-mode point replay (Strava only)
 
 ## License
 

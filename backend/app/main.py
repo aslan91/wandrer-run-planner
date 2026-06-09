@@ -12,10 +12,11 @@ log = get_logger()
 
 app = FastAPI(title="Wandrer Run Planner", version="0.1.0")
 
-# The userscript runs on strava.com and calls this local server.
+# The userscript runs on strava.com and on wandrer.earth (the native Big Map)
+# and calls this local server.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://www.strava.com"],
+    allow_origins=["https://www.strava.com", "https://wandrer.earth"],
     allow_methods=["*"],
     allow_headers=["*"],
 )

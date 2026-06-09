@@ -22,3 +22,16 @@ def test_plan_rejects_out_of_range_target() -> None:
     body = {"start": {"lat": 49.83, "lng": 10.88}, "target_km": 999}
     resp = client.post("/plan", json=body)
     assert resp.status_code == 422
+
+
+def test_cors_allows_supported_origins() -> None:
+    for origin in ("https://www.strava.com", "https://wandrer.earth"):
+        resp = client.options(
+            "/plan",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.headers.get("access-control-allow-origin") == origin
