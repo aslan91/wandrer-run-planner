@@ -8,6 +8,9 @@ import networkx as nx
 import requests
 
 from .geo import haversine_m
+from .log import get_logger
+
+log = get_logger()
 
 # Public Overpass endpoints, tried in order (they are frequently overloaded).
 OVERPASS_URLS = [
@@ -60,16 +63,21 @@ def fetch_overpass(lat: float, lng: float, radius_m: float, timeout: int = 60) -
     for attempt in range(3):
         for url in OVERPASS_URLS:
             try:
+                log.info("overpass try %d: %s", attempt + 1, url)
                 resp = requests.post(
                     url, data={"data": query}, headers=_HEADERS, timeout=timeout + 10
                 )
                 if resp.status_code in (429, 502, 503, 504):
                     last_error = requests.HTTPError(f"{resp.status_code} from {url}")
+                    log.info("overpass %s busy (%d), trying next", url, resp.status_code)
                     continue
                 resp.raise_for_status()
-                return resp.json()
+                js = resp.json()
+                log.info("overpass ok: %d elements", len(js.get("elements", [])))
+                return js
             except requests.RequestException as exc:
                 last_error = exc
+                log.info("overpass %s failed: %s", url, exc)
                 continue
         time.sleep(2 * (attempt + 1))
     raise RuntimeError(f"All Overpass endpoints failed: {last_error}")

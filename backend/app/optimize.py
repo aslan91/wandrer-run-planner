@@ -14,6 +14,10 @@ from dataclasses import dataclass
 
 import networkx as nx
 
+from .log import get_logger
+
+log = get_logger()
+
 
 @dataclass
 class Route:
@@ -128,10 +132,19 @@ def plan_route(
     home_dist = nx.single_source_dijkstra_path_length(g, start, weight="length")
 
     best: Route | None = None
-    for _ in range(attempts):
+    log_every = max(1, attempts // 10)
+    for i in range(attempts):
         route = _one_walk(g, start, target_m, tol_m, home_dist, rng)
         if route is None:
             continue
         if best is None or route.score > best.score:
             best = route
+        if (i + 1) % log_every == 0:
+            if best is not None:
+                log.info(
+                    "  attempt %d/%d — best: %.2fkm, new %.2fkm",
+                    i + 1, attempts, best.distance_m / 1000.0, best.new_m / 1000.0,
+                )
+            else:
+                log.info("  attempt %d/%d — no valid loop yet", i + 1, attempts)
     return best

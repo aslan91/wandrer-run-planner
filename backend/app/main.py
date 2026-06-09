@@ -4,8 +4,11 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from .log import get_logger
 from .models import PlanRequest, PlanResponse
 from .planner import plan
+
+log = get_logger()
 
 app = FastAPI(title="Wandrer Run Planner", version="0.1.0")
 
@@ -28,6 +31,8 @@ def plan_endpoint(req: PlanRequest) -> PlanResponse:
     try:
         return plan(req)
     except ValueError as exc:
+        log.info("plan rejected: %s", exc)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - surface upstream errors to the client
+        log.exception("plan failed")
         raise HTTPException(status_code=502, detail=f"Planning failed: {exc}") from exc

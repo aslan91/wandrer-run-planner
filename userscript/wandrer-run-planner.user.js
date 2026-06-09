@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wandrer Run Planner
 // @namespace    https://github.com/aslan91/wandrer-run-planner
-// @version      0.7.0
+// @version      0.8.0
 // @description  Plan Strava runs that maximize untravelled (Wandrer red) paths within a target distance.
 // @match        https://www.strava.com/routes*
 // @match        https://www.strava.com/maps*
@@ -686,69 +686,110 @@
     return pts;
   }
 
-  // Dispatch a realistic click on the map canvas at a given lng/lat.
+  // Add one waypoint by emitting a synthetic click on Strava's Mapbox map.
+  //
+  // Strava's manual builder subscribes via Mapbox `map.on('click'/'mousedown'/
+  // 'mouseup', …)`, NOT via DOM clicks on whatever element happens to sit above
+  // the canvas (an overlay swallowed our old DOM clicks, which is why nothing
+  // was placed). So we drive the map's own event bus with a proper
+  // MapMouseEvent. We deliberately do NOT also dispatch DOM events on the
+  // canvas: Mapbox would convert those into its own map 'click', double-adding
+  // every point.
   function clickAt(map, canvas, lat, lng) {
-    const p = map.project([lng, lat]); // {x, y} in canvas pixels
-    const rect = canvas.getBoundingClientRect();
-    const clientX = rect.left + p.x;
-    const clientY = rect.top + p.y;
-    if (
-      clientX < rect.left || clientX > rect.right ||
-      clientY < rect.top || clientY > rect.bottom
-    ) {
-      return false; // point off-screen; skip
+    try {
+      const point = map.project([lng, lat]); // Point {x, y} in canvas pixels
+      const lngLat = map.unproject(point);   // real LngLat instance
+      const rect = canvas.getBoundingClientRect();
+      const clientX = rect.left + point.x;
+      const clientY = rect.top + point.y;
+      const onScreen =
+        clientX >= rect.left && clientX <= rect.right &&
+        clientY >= rect.top && clientY <= rect.bottom;
+
+      const domEvt = (type) =>
+        new MouseEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          clientX,
+          clientY,
+          button: 0,
+          buttons: type === "mousedown" ? 1 : 0,
+        });
+
+      const mapEvt = (type, original) => ({
+        type,
+        target: map,
+        originalEvent: original,
+        point,
+        lngLat,
+        _defaultPrevented: false,
+        preventDefault() { this._defaultPrevented = true; },
+        get defaultPrevented() { return this._defaultPrevented; },
+      });
+
+      // Full gesture so handlers that need mousedown+mouseup (not just click) react.
+      for (const type of ["mousedown", "mouseup", "click"]) {
+        map.fire(type, mapEvt(type, domEvt(type)));
+      }
+      return { ok: true, onScreen, point, lngLat };
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("[WRP] clickAt failed:", err);
+      return { ok: false, error: err };
     }
-    const base = {
-      bubbles: true,
-      cancelable: true,
-      view: window,
-      clientX,
-      clientY,
-      button: 0,
-    };
-    const target = document.elementFromPoint(clientX, clientY) || canvas;
-    target.dispatchEvent(new PointerEvent("pointerdown", { ...base, pointerId: 1 }));
-    target.dispatchEvent(new MouseEvent("mousedown", base));
-    target.dispatchEvent(new PointerEvent("pointerup", { ...base, pointerId: 1 }));
-    target.dispatchEvent(new MouseEvent("mouseup", base));
-    target.dispatchEvent(new MouseEvent("click", base));
-    return true;
   }
 
   async function onCreate() {
-    const res = window.__wrpLast;
-    if (!res) return setStatus("Plan a route first.");
-    const map = findMap();
-    if (!map) return setStatus("Map not found.");
-    const canvas = map.getCanvas && map.getCanvas();
-    if (!canvas) return setStatus("Map canvas not available.");
+    try {
+      const res = window.__wrpLast;
+      if (!res) return setStatus("Plan a route first.");
+      const map = findMap();
+      if (!map) return setStatus("Map not found.");
+      const canvas = map.getCanvas && map.getCanvas();
+      if (!canvas) return setStatus("Map canvas not available.");
 
-    const manual = await ensureManualMode();
-    if (!manual.ok) {
+      const manual = await ensureManualMode();
+      if (!manual.ok) {
+        setStatus(
+          "Enable Strava's \"Manual mode\" toggle first, then click Create again " +
+          "(could not toggle it automatically)."
+        );
+        return;
+      }
+
+      const pts = pointsForManual(res.coordinates);
+      fitRoute(map, pts);
+      await sleep(300); // let the map settle after fitBounds
+
+      // eslint-disable-next-line no-console
+      console.log("[WRP] create: placing", pts.length, "points via Mapbox events");
+      setStatus(`Creating route in Strava… 0/${pts.length} points`);
+      let placed = 0, offscreen = 0;
+      for (let i = 0; i < pts.length; i++) {
+        const [la, ln] = pts[i];
+        const r = clickAt(map, canvas, la, ln);
+        if (r.ok) placed++;
+        if (r.ok && r.onScreen === false) offscreen++;
+        if (i === 0) {
+          // eslint-disable-next-line no-console
+          console.log("[WRP] first point:", { lat: la, lng: ln, result: r });
+        }
+        setStatus(`Creating route in Strava… ${i + 1}/${pts.length} points`);
+        await sleep(120); // give Strava time to register each vertex
+      }
+      // eslint-disable-next-line no-console
+      console.log(`[WRP] create done: placed ${placed}/${pts.length}, ${offscreen} off-screen`);
       setStatus(
-        "Enable Strava's \"Manual mode\" toggle first, then click Create again " +
-        "(could not toggle it automatically)."
+        `Placed ${placed}/${pts.length} points. Review and click Strava's "Save Route".` +
+        (offscreen ? ` (${offscreen} were off-screen.)` : "") +
+        (placed === 0 ? " Nothing registered — see console; we may need a different click channel." : "")
       );
-      return;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[WRP] create failed:", err);
+      setStatus("Create failed: " + err.message + " (see console).");
     }
-
-    const pts = pointsForManual(res.coordinates);
-    fitRoute(map, pts);
-    await sleep(300); // let the map settle after fitBounds
-
-    setStatus(`Creating route in Strava… 0/${pts.length} points`);
-    let placed = 0;
-    for (let i = 0; i < pts.length; i++) {
-      const [la, ln] = pts[i];
-      const ok = clickAt(map, canvas, la, ln);
-      if (ok) placed++;
-      if (i % 5 === 0) setStatus(`Creating route in Strava… ${i + 1}/${pts.length}`);
-      await sleep(90); // give Strava time to register each vertex
-    }
-    setStatus(
-      `Placed ${placed}/${pts.length} points. Review and click Strava's "Save Route". ` +
-      (placed < pts.length ? "Some points were off-screen and skipped." : "")
-    );
   }
 
   function onDownloadGpx() {
