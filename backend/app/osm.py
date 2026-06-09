@@ -22,12 +22,16 @@ log = get_logger()
 _CACHE_DIR = Path(__file__).resolve().parent.parent / ".cache" / "overpass"
 _CACHE_TTL_S = 7 * 24 * 3600  # a week
 
-# Public Overpass endpoints, tried in order (they are frequently overloaded, so
-# we fall through fast on timeout/5xx and the result is cached on disk anyway).
+# Public Overpass endpoints with free, global, no-key coverage, per the official
+# wiki list (https://wiki.openstreetmap.org/wiki/Overpass_API#Public_Overpass_API_instances).
+# private.coffee (formerly kumi.systems) advertises no rate limit, so it leads;
+# overpass-api.de is the high-capacity fallback (often 504s under load). The
+# other historical mirrors are unusable here: maps.mail.ru is suspended (403),
+# overpass.osm.ch is Switzerland-only, openstreetmap.fr 403s. Results are cached
+# on disk anyway, so a slow first fetch only happens once per area.
 OVERPASS_URLS = [
+    "https://overpass.private.coffee/api/interpreter",
     "https://overpass-api.de/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter",
-    "https://overpass.openstreetmap.fr/api/interpreter",
 ]
 
 # Overpass rejects requests without a descriptive User-Agent (HTTP 406).
@@ -87,14 +91,18 @@ def fetch_overpass(lat: float, lng: float, radius_m: float, timeout: int = 25) -
     in the same area is instant and avoids the slow/flaky public servers. Tries
     each public endpoint with a short per-request timeout so a stuck mirror
     fails fast and we move on, instead of blocking until the userscript gives up.
+
+    Uses ``out geom;`` instead of the ``(._;>;); out;`` recursion: it returns
+    each way's geometry inline (and keeps the node-id refs for connectivity),
+    which is far cheaper for the server and avoids the timeouts the recursive
+    union triggers under load.
     """
     query = f"""
     [out:json][timeout:{timeout}];
     way[highway]
        [highway!~"^(motorway|motorway_link|trunk|trunk_link|construction|proposed|raceway)$"]
        (around:{int(radius_m)},{lat},{lng});
-    (._;>;);
-    out;
+    out geom;
     """
 
     cache_file = _cache_path(query)
@@ -109,7 +117,12 @@ def fetch_overpass(lat: float, lng: float, radius_m: float, timeout: int = 25) -
             try:
                 log.info("overpass try %d: %s", attempt + 1, url)
                 resp = requests.post(
-                    url, data={"data": query}, headers=_HEADERS, timeout=timeout + 5
+                    url,
+                    data={"data": query},
+                    headers=_HEADERS,
+                    # (connect, read) timeouts: bail on a stalled mirror quickly
+                    # so we fail over to the next one instead of hanging.
+                    timeout=(10, timeout + 5),
                 )
                 if resp.status_code in (429, 502, 503, 504):
                     last_error = requests.HTTPError(f"{resp.status_code} from {url}")
@@ -142,6 +155,15 @@ def build_graph(overpass_json: dict) -> nx.Graph:
             coords[el["id"]] = (el["lat"], el["lon"])
         elif el["type"] == "way":
             ways.append(el)
+            # `out geom;` embeds each node's coordinates inline (aligned with the
+            # way's node-id refs); harvest them so we don't need a separate node
+            # list. Falls back gracefully to any `node` elements above.
+            geom = el.get("geometry")
+            node_ids = el.get("nodes")
+            if geom and node_ids and len(geom) == len(node_ids):
+                for nid, pt in zip(node_ids, geom):
+                    if pt is not None:
+                        coords[nid] = (pt["lat"], pt["lon"])
 
     g = nx.Graph()
     for way in ways:
