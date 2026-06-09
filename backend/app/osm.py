@@ -166,7 +166,7 @@ def build_graph(overpass_json: dict) -> nx.Graph:
             geom = el.get("geometry")
             node_ids = el.get("nodes")
             if geom and node_ids and len(geom) == len(node_ids):
-                for nid, pt in zip(node_ids, geom):
+                for nid, pt in zip(node_ids, geom, strict=True):
                     if pt is not None:
                         coords[nid] = (pt["lat"], pt["lon"])
 
@@ -179,7 +179,7 @@ def build_graph(overpass_json: dict) -> nx.Graph:
             continue
         way_id = way.get("id")
         node_ids = way.get("nodes", [])
-        for a, b in zip(node_ids[:-1], node_ids[1:]):
+        for a, b in zip(node_ids[:-1], node_ids[1:], strict=True):
             if a not in coords or b not in coords:
                 continue
             ca, cb = coords[a], coords[b]

@@ -1,11 +1,15 @@
 // ==UserScript==
 // @name         Wandrer Run Planner
 // @namespace    https://github.com/aslan91/wandrer-run-planner
-// @version      0.9.4
+// @version      0.10.0
 // @description  Plan Strava runs that maximize untravelled (Wandrer red) paths within a target distance.
 // @match        https://www.strava.com/routes*
 // @match        https://www.strava.com/maps*
 // @match        https://www.strava.com/athlete/maps*
+// @homepageURL  https://github.com/aslan91/wandrer-run-planner
+// @supportURL   https://github.com/aslan91/wandrer-run-planner/issues
+// @updateURL    https://raw.githubusercontent.com/aslan91/wandrer-run-planner/main/userscript/wandrer-run-planner.user.js
+// @downloadURL  https://raw.githubusercontent.com/aslan91/wandrer-run-planner/main/userscript/wandrer-run-planner.user.js
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
 // @connect      localhost
@@ -267,17 +271,68 @@
       <input id="wrp-tol" type="number" value="1" step="0.5" min="0"
              style="width:100%;box-sizing:border-box"></label>
     <button id="wrp-pick" style="width:100%;margin:6px 0;padding:6px">Pick start on map</button>
+    <input id="wrp-coords" type="text" placeholder="or paste: lat, lng"
+           style="width:100%;box-sizing:border-box;margin:2px 0;padding:5px">
     <div id="wrp-start" style="color:#888;font-size:12px;margin:2px 0">start: (none)</div>
     <button id="wrp-detect" style="width:100%;margin:6px 0;padding:6px">Detect overlay</button>
     <button id="wrp-plan" style="width:100%;margin:6px 0;padding:6px;background:#fc4c02;color:#fff;border:none;border-radius:6px">Plan route</button>
-    <button id="wrp-create" style="width:100%;margin:6px 0;padding:6px" disabled>Create in Strava (manual)</button>
-    <button id="wrp-gpx" style="width:100%;margin:6px 0;padding:6px" disabled>Download GPX</button>
+    <button id="wrp-gpx" style="width:100%;margin:6px 0;padding:6px;background:#fc4c02;color:#fff;border:none;border-radius:6px" disabled>Download GPX</button>
+    <div style="font-size:11px;color:#888;margin:2px 0 4px">Recommended: load the GPX on your watch, or import it (Strava subscribers: Routes → Upload a Route; Garmin/Komoot also work).</div>
+    <details style="margin:4px 0">
+      <summary style="cursor:pointer;font-size:12px;color:#666">Advanced: draw in Strava</summary>
+      <button id="wrp-create" style="width:100%;margin:6px 0;padding:6px" disabled>Create in Strava (experimental)</button>
+      <div style="font-size:11px;color:#999">Replays points into Strava's manual mode. Fragile against Strava UI changes — prefer GPX.</div>
+    </details>
     <div id="wrp-status" style="margin-top:6px;font-size:12px;color:#444"></div>
   `;
   document.body.appendChild(panel);
 
   const $ = (id) => panel.querySelector(id);
   const setStatus = (t) => ($("#wrp-status").textContent = t);
+
+  // Record the start point and reflect it in the panel. Used by both the
+  // map-picker and the paste field so they stay in sync.
+  function setStart(lat, lng) {
+    startLatLng = { lat, lng };
+    $("#wrp-start").textContent = `start: ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  }
+
+  // Parse a pasted "lat, lng" string. Accepts comma- or whitespace-separated
+  // decimals (e.g. "50.00102, 10.91502", "50.00102 10.91502"), tolerates a
+  // surrounding "lat,lng" label, and validates ranges. Returns {lat,lng} or null.
+  function parseLatLng(text) {
+    if (!text) return null;
+    const nums = text.match(/-?\d+(?:\.\d+)?/g);
+    if (!nums || nums.length < 2) return null;
+    const lat = parseFloat(nums[0]);
+    const lng = parseFloat(nums[1]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+    return { lat, lng };
+  }
+
+  // Apply whatever is in the paste field as the start point.
+  function applyPastedCoords() {
+    const raw = $("#wrp-coords").value.trim();
+    if (!raw) return;
+    const parsed = parseLatLng(raw);
+    if (!parsed) {
+      setStatus("Could not parse coordinates. Use: lat, lng (e.g. 50.001, 10.915).");
+      return;
+    }
+    setStart(parsed.lat, parsed.lng);
+    setStatus("Start set from pasted coordinates.");
+  }
+
+  $("#wrp-coords").addEventListener("change", applyPastedCoords);
+  $("#wrp-coords").addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      applyPastedCoords();
+    }
+  });
+  // Apply immediately on paste (after the browser inserts the text).
+  $("#wrp-coords").addEventListener("paste", () => setTimeout(applyPastedCoords, 0));
 
   // Pick start: the next click anywhere over the map sets the start point.
   //
@@ -353,12 +408,10 @@
         cleanup();
         return;
       }
-      startLatLng = { lat: lngLat.lat, lng: lngLat.lng };
-      $("#wrp-start").textContent =
-        `start: ${startLatLng.lat.toFixed(5)}, ${startLatLng.lng.toFixed(5)}`;
+      setStart(lngLat.lat, lngLat.lng);
+      $("#wrp-coords").value = `${lngLat.lat.toFixed(5)}, ${lngLat.lng.toFixed(5)}`;
       setStatus("Start set.");
-      cleanup();
-    };
+      cleanup();    };
 
     document.addEventListener("pointerdown", swallow, true);
     document.addEventListener("mousedown", swallow, true);
@@ -366,9 +419,24 @@
     document.addEventListener("keydown", onKey, true);
   });
 
-  $("#wrp-plan").addEventListener("click", onPlan);
+  // Prevent overlapping runs: Plan and Create are long async flows, and firing
+  // a second one while the first is mid-flight corrupts shared state (the map,
+  // window.__wrpLast, Strava's manual-mode point stream). guard() ignores
+  // re-entrant clicks until the in-flight handler settles.
+  let busy = false;
+  const guard = (fn) => async (...args) => {
+    if (busy) return;
+    busy = true;
+    try {
+      await fn(...args);
+    } finally {
+      busy = false;
+    }
+  };
+
+  $("#wrp-plan").addEventListener("click", guard(onPlan));
   $("#wrp-detect").addEventListener("click", onDetect);
-  $("#wrp-create").addEventListener("click", onCreate);
+  $("#wrp-create").addEventListener("click", guard(onCreate));
   $("#wrp-gpx").addEventListener("click", onDownloadGpx);
 
   // ----------------------------------------------------------------------
@@ -593,6 +661,8 @@
   async function onPlan() {
     const map = findMap();
     if (!map) return setStatus("Map not found.");
+    // Honor coordinates typed into the paste field even if it wasn't blurred.
+    applyPastedCoords();
     const start = startLatLng || (() => {
       const c = map.getCenter();
       return { lat: c.lat, lng: c.lng };
@@ -616,7 +686,8 @@
       drawRoute(map, res.coordinates);
       setStatus(
         `Done: ${res.distance_km} km, new ${res.new_km} km ` +
-        `(${res.coverage_pct}% new), repeat ${res.repeat_km} km.`
+        `(${res.coverage_pct}% new), repeat ${res.repeat_km} km. ` +
+        `Click "Download GPX" to use it.`
       );
       // Stash for create-in-Strava / GPX download and enable those buttons.
       window.__wrpLast = res;
@@ -670,47 +741,46 @@
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  // Fit the map so the whole route is visible (clicks must land in the canvas).
-  // Returns the route's bounds + centroid so the caller can verify the map
-  // actually moved there.
-  function fitRoute(map, coords) {
-    let minLat = Infinity, minLng = Infinity, maxLat = -Infinity, maxLng = -Infinity;
-    for (const [la, ln] of coords) {
-      if (la < minLat) minLat = la;
-      if (la > maxLat) maxLat = la;
-      if (ln < minLng) minLng = ln;
-      if (ln > maxLng) maxLng = ln;
+  // Pick the map that ACTUALLY receives clicks: the topmost Mapbox instance at
+  // the screen centre. Strava's route builder can host several overlapping map
+  // instances (e.g. the base route-builder map plus the Wandrer overlay map).
+  // The one whose canvas is on TOP at a pixel is the one whose click handler
+  // (manual-mode waypoint add) fires there. Centring/clicking any other instance
+  // moves that map around (the "overlay just panned" symptom) without ever
+  // adding a waypoint. So we resolve the map from the element actually on top at
+  // the screen centre and use THAT same instance for both setCenter and clicks.
+  function mapForElement(maps, el) {
+    for (let node = el; node; node = node.parentElement) {
+      for (const m of maps) {
+        let c;
+        try { c = m.getContainer && m.getContainer(); } catch (_e) { continue; }
+        if (c && c === node) return m;
+      }
     }
-    try {
-      map.fitBounds(
-        [[minLng, minLat], [maxLng, maxLat]],
-        {
-          // Extra right padding keeps the route clear of our floating panel.
-          padding: { top: 60, bottom: 60, left: 60, right: 300 },
-          duration: 0,
-          animate: false,
-        }
-      );
-    } catch (_e) { /* ignore */ }
+    return null;
+  }
+
+  // A click point near the screen centre but clear of our panel (top-right).
+  function centreProbePoint() {
     return {
-      minLat, minLng, maxLat, maxLng,
-      center: { lat: (minLat + maxLat) / 2, lng: (minLng + maxLng) / 2 },
+      x: Math.round(window.innerWidth * 0.4),
+      y: Math.round(window.innerHeight * 0.5),
     };
   }
 
-  // Great-circle distance in metres between two {lat,lng}.
-  function distM(a, b) {
-    const R = 6371000, toRad = (d) => (d * Math.PI) / 180;
-    const dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
-    const s =
-      Math.sin(dLat / 2) ** 2 +
-      Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
-    return 2 * R * Math.asin(Math.sqrt(s));
+  function findInteractiveMap() {
+    const maps = collectMaps().filter(looksLikeMap);
+    if (!maps.length) return null;
+    const { x, y } = centreProbePoint();
+    const owner = mapForElement(maps, document.elementFromPoint(x, y));
+    if (owner) return owner;
+    // Fall back to the largest visible map if the probe didn't resolve an owner.
+    return pickVisibleMap(maps);
   }
 
   // Reduce points for manual mode: keep enough to follow curves but avoid
   // hundreds of clicks. Ramer–Douglas–Peucker on [lat,lng], capped at maxPoints.
-  function pointsForManual(coords, toleranceM = 8, maxPoints = 160) {
+  function pointsForManual(coords, toleranceM = 8, maxPoints = 160, minSpacingM = 15) {
     if (coords.length <= 2) return coords.slice();
 
     const R = 6371000, toRad = (d) => (d * Math.PI) / 180;
@@ -746,11 +816,33 @@
       }
     }
     let pts = coords.filter((_, i) => keep[i]);
+
+    // Enforce a minimum spacing between consecutive kept points. Two points that
+    // land within ~a marker's width of each other on screen make the second
+    // click hit the FIRST point's marker, which opens Strava's context popover
+    // ("Start"/Delete…) instead of adding a waypoint — that is what stalls the
+    // replay after one point. Dropping near-duplicates removes that trigger;
+    // manual mode straight-lines between points so the path barely changes.
+    if (pts.length > 2) {
+      const spaced = [pts[0]];
+      for (let i = 1; i < pts.length - 1; i++) {
+        if (hav(spaced[spaced.length - 1], pts[i]) >= minSpacingM) spaced.push(pts[i]);
+      }
+      const last = pts[pts.length - 1];
+      // Drop the closing point if it coincides with the start (loop closure) so
+      // we never re-click the start marker; otherwise keep it if well-spaced.
+      if (hav(spaced[spaced.length - 1], last) >= minSpacingM &&
+          hav(last, pts[0]) >= minSpacingM) {
+        spaced.push(last);
+      }
+      pts = spaced;
+    }
+
     if (pts.length > maxPoints) {
       const step = pts.length / maxPoints;
       const out = [];
       for (let i = 0; i < maxPoints; i++) out.push(pts[Math.floor(i * step)]);
-      out[out.length - 1] = coords[coords.length - 1];
+      out[out.length - 1] = pts[pts.length - 1];
       pts = out;
     }
     return pts;
@@ -793,65 +885,146 @@
     target.dispatchEvent(mouse("click"));
   }
 
-  // Is a client point inside the visible map canvas AND clear of our own panel
-  // (which floats over the map's right edge and would otherwise eat the click)?
-  function pointIsClickable(clientX, clientY, canvasRect, panelRect) {
-    const inCanvas =
-      clientX >= canvasRect.left + 4 && clientX <= canvasRect.right - 4 &&
-      clientY >= canvasRect.top + 4 && clientY <= canvasRect.bottom - 4;
-    if (!inCanvas) return false;
-    if (panelRect &&
-        clientX >= panelRect.left - 6 && clientX <= panelRect.right + 6 &&
-        clientY >= panelRect.top - 6 && clientY <= panelRect.bottom + 6) {
-      return false; // would land on our panel
-    }
-    return true;
-  }
-
-  // Place one waypoint. If the projected pixel is off-screen or under our panel,
-  // recenter the map on the point first so it lands in a clear, clickable spot
-  // (manual mode straight-lines between consecutive points, so panning between
-  // them is harmless). Returns {ok, recentered}.
-  async function placePoint(map, canvas, panelRect, lat, lng) {
+  // Place one waypoint by centring the map on it and clicking the canvas CENTRE.
+  //
+  // Why the centre instead of projecting the point to its on-screen pixel: at
+  // the canvas centre, Strava's own unproject of the click == map.getCenter()
+  // == the point we just set, BY CONSTRUCTION. That makes placement immune to
+  // projection/zoom/scaling/offset/occlusion errors that smeared earlier
+  // attempts. ``setCenter`` is a synchronous jump (no animation), so the camera
+  // is updated immediately; we click, then pause so Strava registers it.
+  //
+  // ``jitter`` nudges the click a couple of pixels off dead-centre on alternate
+  // points so two consecutive clicks never share the exact same pixel — that
+  // avoids any double-click interpretation (zoom / finish-route). A 2 px nudge
+  // is sub-metre-to-a-few-metres on screen and irrelevant in manual mode, which
+  // straight-lines between points anyway.
+  async function placePointCentered(map, canvas, lng, lat, jitter) {
     try {
-      const rectOf = () => canvas.getBoundingClientRect();
-      let rect = rectOf();
-      let p = map.project([lng, lat]);
-      let clientX = rect.left + p.x;
-      let clientY = rect.top + p.y;
-      let recentered = false;
-
-      if (!pointIsClickable(clientX, clientY, rect, panelRect)) {
-        // Bring the point to the map center (clear of the panel) and retry.
-        map.setCenter([lng, lat]);
-        await sleep(140);
-        rect = rectOf();
-        p = map.project([lng, lat]);
-        clientX = rect.left + p.x;
-        clientY = rect.top + p.y;
-        recentered = true;
-        if (!pointIsClickable(clientX, clientY, rect, panelRect)) {
-          return { ok: false, recentered };
-        }
-      }
-
-      const target = document.elementFromPoint(clientX, clientY) ||
+      map.setCenter([lng, lat]);
+      await sleep(30); // let the repaint/cursor overlay settle
+      // A context popover (e.g. the "Start" card Strava opens after the first
+      // waypoint) overlays the click point and swallows every later click while
+      // the map keeps panning -> "1 point then it just moves". Close it first.
+      await dismissStravaPopover();
+      const r = canvas.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2 + (jitter ? 2 : -2);
+      // Click whatever sits on top at the centre — Strava stacks an interaction
+      // layer above the canvas, and THAT element (not the bare canvas) is what
+      // registers a waypoint. We deliberately do NOT reject by container
+      // membership: the map was chosen as the topmost-at-centre instance, so the
+      // element here belongs to it, and over-strict rejection previously dropped
+      // every point while setCenter still panned the map.
+      const el = document.elementFromPoint(cx, cy) ||
         (map.getCanvasContainer && map.getCanvasContainer()) || canvas;
-      clickXY(target, clientX, clientY);
-      return { ok: true, recentered };
+      clickXY(el, cx, cy);
+      return { ok: true, el };
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.warn("[WRP] placePoint failed:", err);
+      console.warn("[WRP] placePointCentered failed:", err);
       return { ok: false, error: err };
     }
+  }
+
+  // Strava's waypoint context popover (anchored to a marker) lists these actions
+  // together. Match conservatively on the action set so we don't grab unrelated
+  // UI, and pick the innermost (last) matching node.
+  function findStravaPopover() {
+    const nodes = document.querySelectorAll("div, section, aside");
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const el = nodes[i];
+      const t = el.textContent || "";
+      if (t.length <= 200 &&
+          /manual mode/i.test(t) && /customize/i.test(t) && /delete/i.test(t)) {
+        const rect = el.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) return el;
+      }
+    }
+    return null;
+  }
+
+  // Close an open Strava popover. Strava closes its popovers on an OUTSIDE
+  // pointer interaction (Escape alone did NOT work here), so we dispatch a real
+  // pointerdown/up on our own panel — a safe, map-free, listener-free spot in
+  // the top-right corner that can't add a waypoint or trigger the popover's own
+  // "Delete" action. Escape is kept as a backup. Returns true if it closed.
+  async function dismissStravaPopover() {
+    if (!findStravaPopover()) return false;
+    const panelEl = document.getElementById("wrp-panel");
+    let x = 5, y = 5;
+    if (panelEl) {
+      const pr = panelEl.getBoundingClientRect();
+      x = Math.round(pr.left + pr.width / 2);
+      y = Math.round(pr.top + 10); // over the title text (no click handler)
+    }
+    const el = document.elementFromPoint(x, y) || panelEl || document.body;
+    const opts = (type) => ({
+      bubbles: true, cancelable: true, composed: true,
+      clientX: x, clientY: y, button: 0,
+      buttons: type.endsWith("down") ? 1 : 0,
+    });
+    el.dispatchEvent(new PointerEvent("pointerdown", {
+      ...opts("pointerdown"), pointerId: 1, pointerType: "mouse", isPrimary: true,
+    }));
+    el.dispatchEvent(new MouseEvent("mousedown", opts("mousedown")));
+    el.dispatchEvent(new PointerEvent("pointerup", {
+      ...opts("pointerup"), pointerId: 1, pointerType: "mouse", isPrimary: true,
+    }));
+    el.dispatchEvent(new MouseEvent("mouseup", opts("mouseup")));
+    // Escape backup.
+    for (const type of ["keydown", "keyup"]) {
+      document.dispatchEvent(new KeyboardEvent(type, {
+        key: "Escape", code: "Escape", keyCode: 27, which: 27,
+        bubbles: true, cancelable: true,
+      }));
+    }
+    await sleep(90);
+    return !findStravaPopover();
+  }
+
+  // While we replay synthetic clicks, Mapbox's own interaction handlers must be
+  // OFF. Otherwise each emitted pointerdown/up is partly interpreted as a drag,
+  // the map pans a few pixels per point, and that drift accumulates so every
+  // later waypoint lands progressively off-route — the tell-tale "star/fan" of
+  // crossing segments. Strava's waypoint-add listener is separate from these
+  // gesture handlers, so disabling them still lets points register. Returns a
+  // restore() that re-enables exactly the handlers we turned off.
+  function freezeMapGestures(map) {
+    const handlers = [
+      "dragPan", "dragRotate", "scrollZoom", "boxZoom",
+      "touchZoomRotate", "keyboard", "doubleClickZoom",
+    ];
+    const reEnable = [];
+    for (const name of handlers) {
+      try {
+        const ctl = map[name];
+        if (ctl && typeof ctl.isEnabled === "function" &&
+            typeof ctl.disable === "function" && typeof ctl.enable === "function") {
+          if (ctl.isEnabled()) {
+            ctl.disable();
+            reEnable.push(name);
+          }
+        }
+      } catch (_e) { /* ignore individual handler */ }
+    }
+    return function restore() {
+      for (const name of reEnable) {
+        try { map[name].enable(); } catch (_e) { /* ignore */ }
+      }
+    };
   }
 
   async function onCreate() {
     try {
       const res = window.__wrpLast;
       if (!res) return setStatus("Plan a route first.");
-      const map = findMap();
-      if (!map) return setStatus("Map not found.");
+      // Place into the map that actually owns clicks at the screen centre, not
+      // just the largest visible map — those can differ, which is what scattered
+      // earlier attempts (we drew/projected on one map but Strava read clicks on
+      // another). Fall back to the generic finder if hit-testing comes up empty.
+      const map = findInteractiveMap() || findMap();
+      if (!map) return setStatus("Map not found — click the route-builder map once, then retry.");
       const canvas = map.getCanvas && map.getCanvas();
       if (!canvas) return setStatus("Map canvas not available.");
 
@@ -865,55 +1038,72 @@
       }
 
       const pts = pointsForManual(res.coordinates);
-      const box = fitRoute(map, pts);
-      await sleep(350); // let the map settle after fitBounds
+      if (pts.length < 2) return setStatus("Route too short to create.");
 
-      // Sanity-check: did we move the RIGHT map to the route? If the chosen map
-      // ended up far from the route centroid, we likely grabbed the wrong map
-      // instance (Strava can have several) — abort instead of clicking blindly.
-      let center = null;
-      try { const c = map.getCenter(); center = { lat: c.lat, lng: c.lng }; } catch (_e) { /* */ }
-      const drift = center ? distM(center, box.center) : Infinity;
-      // eslint-disable-next-line no-console
-      console.log("[WRP] create: map check", {
-        mapCenter: center,
-        routeCenter: box.center,
-        driftMeters: Math.round(drift),
-        visibleMaps: collectMaps().map(mapVisibleArea),
-      });
-      if (drift > 3000) {
-        setStatus(
-          `Wrong map detected (center is ${(drift / 1000).toFixed(1)} km from the ` +
-          "route). Click directly on the route-builder map once, then retry Create. " +
-          "Or use Download GPX."
-        );
-        return;
-      }
+      // Log which map we picked, and a snapshot of the centre element, so a
+      // failed run is diagnosable: if the centre element is not a Strava map
+      // layer, Strava won't register the click as a waypoint.
+      try {
+        const { x, y } = centreProbePoint();
+        const probe = document.elementFromPoint(x, y);
+        // eslint-disable-next-line no-console
+        console.log("[WRP] create: chosen map + centre element", {
+          centreEl: probe && `${probe.tagName}.${(probe.className || "").toString().slice(0, 60)}`,
+          mapContainerHasProbe: !!(map.getContainer && map.getContainer().contains(probe)),
+          candidateMaps: collectMaps().filter(looksLikeMap).length,
+        });
+      } catch (_e) { /* ignore diagnostics failure */ }
 
       // eslint-disable-next-line no-console
-      console.log("[WRP] create: placing", pts.length, "points via DOM events");
-      const panelEl = document.getElementById("wrp-panel");
-      const panelRect = panelEl ? panelEl.getBoundingClientRect() : null;
+      console.log("[WRP] create: placing", pts.length, "points via centre-click");
       setStatus(`Creating route in Strava… 0/${pts.length} points`);
-      let placed = 0, skipped = 0, recentered = 0;
-      for (let i = 0; i < pts.length; i++) {
-        const [la, ln] = pts[i];
-        const r = await placePoint(map, canvas, panelRect, la, ln);
-        if (r.ok) placed++; else skipped++;
-        if (r.recentered) recentered++;
-        if (i === 0) {
-          // eslint-disable-next-line no-console
-          console.log("[WRP] first point:", { lat: la, lng: ln, result: r });
+
+      // Zoom in enough that the ~15 m minimum point spacing maps to a healthy
+      // pixel gap, so centring on point N+1 moves point N's marker clear of the
+      // click pixel (no accidental re-click -> no context popover). We centre
+      // each point individually, so a high zoom never pushes points off-screen.
+      try {
+        if (typeof map.getZoom === "function" && map.getZoom() < 16) {
+          map.setZoom(16);
+          await sleep(120);
         }
-        setStatus(`Creating route in Strava… ${i + 1}/${pts.length} points`);
-        await sleep(r.recentered ? 60 : 110);
+      } catch (_e) { /* ignore */ }
+
+      let placed = 0, skipped = 0;
+      // Freeze Mapbox's drag/zoom handlers on the SAME map we click, so our
+      // synthetic clicks can only add waypoints — never pan or (double-click)
+      // zoom the map. Freezing the wrong instance is why zoom still happened
+      // before. Restored in finally.
+      const restoreGestures = freezeMapGestures(map);
+      try {
+        for (let i = 0; i < pts.length; i++) {
+          const [la, ln] = pts[i];
+          const r = await placePointCentered(map, canvas, ln, la, i % 2 === 0);
+          if (r.ok) placed++; else skipped++;
+          if (i === 0) {
+            const el = r.el;
+            // eslint-disable-next-line no-console
+            console.log("[WRP] first point:", {
+              lat: la, lng: ln, ok: r.ok,
+              clickedEl: el && `${el.tagName}.${(el.className || "").toString().slice(0, 60)}`,
+            });
+          }
+          setStatus(`Creating route in Strava… ${i + 1}/${pts.length} points`);
+          // Spacing keeps consecutive clicks apart in time (no double-click) and
+          // gives Strava time to register each waypoint.
+          await sleep(180);
+        }
+      } finally {
+        restoreGestures();
       }
+      // Clear any popover left open by the final waypoint so the user sees a
+      // clean map ready for "Save Route".
+      await dismissStravaPopover();
       // eslint-disable-next-line no-console
-      console.log(`[WRP] create done: placed ${placed}/${pts.length}, ${skipped} skipped, ${recentered} recentered`);
+      console.log(`[WRP] create done: placed ${placed}/${pts.length}, ${skipped} skipped`);
       setStatus(
-        `Placed ${placed}/${pts.length} points` +
-        (recentered ? ` (${recentered} via auto-pan)` : "") +
-        `. Review and click Strava's "Save Route".` +
+        `Placed ${placed}/${pts.length} points. ` +
+        `Review and click Strava's "Save Route".` +
         (skipped ? ` ${skipped} could not be placed.` : "") +
         (placed === 0 ? " Nothing registered — see console." : "")
       );
@@ -931,11 +1121,15 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `wandrer-run-${res.distance_km}km.gpx`;
+    const date = new Date().toISOString().slice(0, 10);
+    a.download = `wandrer-run-${date}-${res.distance_km}km.gpx`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
-    setStatus("GPX downloaded. Import via Strava → Routes → Upload, or load on your watch.");
+    setStatus(
+      `Saved ${a.download}. Load it on your watch (Garmin/COROS…) or import into ` +
+      "your mapping app. In Strava: Dashboard → Routes → Upload a Route (subscriber)."
+    );
   }
 })();

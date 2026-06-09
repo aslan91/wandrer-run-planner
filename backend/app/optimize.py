@@ -99,7 +99,7 @@ def _one_walk(
             home = nx.shortest_path(g, cur, start, weight="length")
         except nx.NetworkXNoPath:
             return None
-        for a, b in zip(home[:-1], home[1:]):
+        for a, b in zip(home[:-1], home[1:], strict=True):
             edge = g[a][b]
             elen = edge["length"]
             eid = frozenset((a, b))

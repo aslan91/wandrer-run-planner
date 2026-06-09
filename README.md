@@ -83,15 +83,40 @@ which still produces a valid (just not Wandrer-aware) route.
 > so keep the planning area within the visible map (zoom to roughly the run
 > area before planning).
 
+### Using a planned route
+
+After **Plan route**, the panel offers two ways to use the result:
+
+1. **Download GPX (recommended).** One click writes a GPX with both a `<trk>`
+   and a `<rte>` plus metadata, named
+   `wandrer-run-<date>-<km>km.gpx`. This is the reliable, exact path: load it
+   straight onto a watch (Garmin, COROS, …) or import it into a mapping app.
+   Strava subscribers can import it via **Dashboard → Routes → Upload a Route**.
+   Because browsers don't let a script choose a file in another site's upload
+   dialog (and Strava has no public route-creation API), the file pick itself is
+   the one manual step — everything up to it is automated.
+2. **Create in Strava (experimental).** Hidden under *Advanced*. Replays the
+   route into Strava's *manual mode* by synthesizing map clicks. It needs no
+   file import but depends on Strava's current DOM/UI, so it can break when
+   Strava changes their builder. Prefer the GPX path; use this only if you want
+   the route drawn directly in the open builder.
+
 ## Status
 
 - [x] Overpass fetch + walkable graph build
 - [x] Randomized budget-constrained optimizer (max untravelled, min repeats)
-- [x] GPX export + route simplification to Strava waypoints
+- [x] GPX export (`<trk>` + metadata) + waypoint simplification
 - [x] FastAPI `/plan` endpoint (CORS for strava.com)
 - [x] CLI for browser-free testing
-- [x] Userscript: panel, pick-start, plan, draw route
+- [x] Userscript: panel, pick-start (map or paste lat,lng), plan, draw route
 - [x] Live Wandrer overlay read via `querySourceFeatures` + auto-detect
-- [x] "Create route in Strava" via manual-mode point replay (+ GPX download fallback)
+- [x] **Primary export: one-click GPX** (watch / mapping app / Strava route upload)
+- [x] Experimental "Create in Strava" via manual-mode point replay
 
-This is a private project. Not affiliated with Strava or Wandrer.
+## License
+
+Released under the [MIT License](LICENSE).
+
+This is a personal hobby project, not affiliated with, endorsed by, or
+connected to Strava or Wandrer. Use it at your own risk and in accordance with
+their respective terms of service.

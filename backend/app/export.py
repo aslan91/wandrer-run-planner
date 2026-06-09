@@ -8,14 +8,25 @@ from .geo import haversine_m
 
 
 def to_gpx(coords: list[tuple[float, float]], name: str = "Wandrer Run") -> str:
-    """Serialize a [lat, lng] route to a GPX track string."""
+    """Serialize a [lat, lng] route to a GPX string.
+
+    Emits a single ``<trk>`` plus top-level metadata. We deliberately do NOT
+    also emit a ``<rte>`` with the same geometry: Strava's route upload counts
+    both elements, which doubles the reported distance.
+    """
     gpx = gpxpy.gpx.GPX()
+    gpx.creator = "wandrer-run-planner"
+    gpx.name = name
+    gpx.description = "Planned to maximize untravelled (Wandrer) paths."
+
     track = gpxpy.gpx.GPXTrack(name=name)
+    track.type = "running"
     gpx.tracks.append(track)
     segment = gpxpy.gpx.GPXTrackSegment()
     track.segments.append(segment)
     for lat, lng in coords:
         segment.points.append(gpxpy.gpx.GPXTrackPoint(lat, lng))
+
     return gpx.to_xml()
 
 
@@ -65,7 +76,7 @@ def simplify(
             stack.append((lo, idx))
             stack.append((idx, hi))
 
-    pts = [c for c, k in zip(coords, keep) if k]
+    pts = [c for c, k in zip(coords, keep, strict=True) if k]
     if len(pts) > max_points:
         step = len(pts) / max_points
         pts = [pts[int(i * step)] for i in range(max_points)]

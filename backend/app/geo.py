@@ -31,9 +31,9 @@ def densify(
     if len(polyline) < 2:
         return list(polyline)
     out: list[tuple[float, float]] = [polyline[0]]
-    for a, b in zip(polyline[:-1], polyline[1:]):
+    for a, b in zip(polyline[:-1], polyline[1:], strict=True):
         seg = haversine_m(a, b)
-        n = max(1, int(seg // step_m))
+        n = max(1, math.ceil(seg / step_m))
         for i in range(1, n + 1):
             t = i / n
             out.append((a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t))

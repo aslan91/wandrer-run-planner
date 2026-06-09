@@ -1,0 +1,67 @@
+[project]
+name = "wandrer-run-planner"
+version = "0.1.0"
+description = "Plan running routes that maximize coverage of untravelled (Wandrer) paths."
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "requests>=2.31",
+    "networkx>=3.2",
+    "gpxpy>=1.6",
+    "pydantic>=2.6",
+    "truststore>=0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "httpx>=0.27",  # FastAPI TestClient dependency
+    "types-requests>=2.31",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# Flat layout with a `tests` dir alongside `app`; pin the package explicitly so
+# setuptools auto-discovery doesn't choke on multiple top-level directories.
+packages = ["app"]
+
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "SIM",  # flake8-simplify
+    "C4",   # flake8-comprehensions
+]
+
+[tool.mypy]
+python_version = "3.10"
+packages = ["app"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# These third-party packages ship without type stubs.
+module = ["gpxpy.*", "networkx.*", "truststore.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"

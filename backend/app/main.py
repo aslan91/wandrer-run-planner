@@ -31,8 +31,13 @@ def plan_endpoint(req: PlanRequest) -> PlanResponse:
     try:
         return plan(req)
     except ValueError as exc:
+        # Caller asked for something we can't satisfy (e.g. no paths, no loop).
         log.info("plan rejected: %s", exc)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001 - surface upstream errors to the client
+    except RuntimeError as exc:
+        # Upstream dependency (Overpass) is unavailable — transient, retryable.
+        log.warning("plan upstream failure: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - last resort: surface as a 500
         log.exception("plan failed")
-        raise HTTPException(status_code=502, detail=f"Planning failed: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Planning failed: {exc}") from exc
