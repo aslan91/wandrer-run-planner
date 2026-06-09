@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wandrer Run Planner
 // @namespace    https://github.com/aslan91/wandrer-run-planner
-// @version      0.8.1
+// @version      0.9.0
 // @description  Plan Strava runs that maximize untravelled (Wandrer red) paths within a target distance.
 // @match        https://www.strava.com/routes*
 // @match        https://www.strava.com/maps*
@@ -686,19 +686,18 @@
     return pts;
   }
 
-  // Add one waypoint by emitting a synthetic click on Strava's Mapbox map.
+  // Add one waypoint by emitting a synthetic click on Strava's map canvas.
   //
-  // Strava's manual builder subscribes via Mapbox `map.on('click'/'mousedown'/
-  // 'mouseup', …)`, NOT via DOM clicks on whatever element happens to sit above
-  // the canvas (an overlay swallowed our old DOM clicks, which is why nothing
-  // was placed). So we drive the map's own event bus with a proper
-  // MapMouseEvent. We deliberately do NOT also dispatch DOM events on the
-  // canvas: Mapbox would convert those into its own map 'click', double-adding
-  // every point.
+  // map.fire('click', …) reaches Mapbox's internal event bus but Strava's manual
+  // builder did NOT react to it — it listens to real DOM events on the canvas
+  // (which Mapbox itself turns into a map 'click'). So we dispatch a genuine
+  // pointer+mouse+click gesture on the canvas element at the projected pixel.
+  // The browser does not synthesize 'click' from synthetic mousedown/up, so we
+  // emit it explicitly. Same point for down+up => Mapbox treats it as a click,
+  // not a drag.
   function clickAt(map, canvas, lat, lng) {
     try {
       const point = map.project([lng, lat]); // Point {x, y} in canvas pixels
-      const lngLat = map.unproject(point);   // real LngLat instance
       const rect = canvas.getBoundingClientRect();
       const clientX = rect.left + point.x;
       const clientY = rect.top + point.y;
@@ -706,32 +705,37 @@
         clientX >= rect.left && clientX <= rect.right &&
         clientY >= rect.top && clientY <= rect.bottom;
 
-      const domEvt = (type) =>
-        new MouseEvent(type, {
-          bubbles: true,
-          cancelable: true,
-          clientX,
-          clientY,
-          button: 0,
-          buttons: type === "mousedown" ? 1 : 0,
-        });
-
-      const mapEvt = (type, original) => ({
-        type,
-        target: map,
-        originalEvent: original,
-        point,
-        lngLat,
-        _defaultPrevented: false,
-        preventDefault() { this._defaultPrevented = true; },
-        get defaultPrevented() { return this._defaultPrevented; },
+      const opts = (type) => ({
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        clientX,
+        clientY,
+        screenX: clientX,
+        screenY: clientY,
+        button: 0,
+        buttons: type === "mousedown" || type === "pointerdown" ? 1 : 0,
+      });
+      const ptrOpts = (type) => ({
+        ...opts(type),
+        pointerId: 1,
+        pointerType: "mouse",
+        isPrimary: true,
       });
 
-      // Full gesture so handlers that need mousedown+mouseup (not just click) react.
-      for (const type of ["mousedown", "mouseup", "click"]) {
-        map.fire(type, mapEvt(type, domEvt(type)));
+      // The element actually under the point (Mapbox listens on the canvas, but
+      // an overlay may sit on top); dispatch to both to be safe.
+      const top = document.elementFromPoint(clientX, clientY) || canvas;
+      const targets = top === canvas ? [canvas] : [top, canvas];
+
+      for (const target of targets) {
+        target.dispatchEvent(new PointerEvent("pointerdown", ptrOpts("pointerdown")));
+        target.dispatchEvent(new MouseEvent("mousedown", opts("mousedown")));
+        target.dispatchEvent(new PointerEvent("pointerup", ptrOpts("pointerup")));
+        target.dispatchEvent(new MouseEvent("mouseup", opts("mouseup")));
+        target.dispatchEvent(new MouseEvent("click", opts("click")));
       }
-      return { ok: true, onScreen, point, lngLat };
+      return { ok: true, onScreen, point, target: top && top.className };
     } catch (err) {
       // eslint-disable-next-line no-console
       console.warn("[WRP] clickAt failed:", err);
