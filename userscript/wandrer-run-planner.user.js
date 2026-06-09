@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wandrer Run Planner
 // @namespace    https://github.com/aslan91/wandrer-run-planner
-// @version      0.9.3
+// @version      0.9.4
 // @description  Plan Strava runs that maximize untravelled (Wandrer red) paths within a target distance.
 // @match        https://www.strava.com/routes*
 // @match        https://www.strava.com/maps*
@@ -251,6 +251,7 @@
   let pickingStart = false;
 
   const panel = document.createElement("div");
+  panel.id = "wrp-panel";
   panel.style.cssText = [
     "position:fixed", "top:90px", "right:16px", "z-index:99999",
     "background:#fff", "border:1px solid #ddd", "border-radius:10px",
@@ -683,7 +684,12 @@
     try {
       map.fitBounds(
         [[minLng, minLat], [maxLng, maxLat]],
-        { padding: 80, duration: 0, animate: false }
+        {
+          // Extra right padding keeps the route clear of our floating panel.
+          padding: { top: 60, bottom: 60, left: 60, right: 300 },
+          duration: 0,
+          animate: false,
+        }
       );
     } catch (_e) { /* ignore */ }
     return {
@@ -704,7 +710,7 @@
 
   // Reduce points for manual mode: keep enough to follow curves but avoid
   // hundreds of clicks. Ramer–Douglas–Peucker on [lat,lng], capped at maxPoints.
-  function pointsForManual(coords, toleranceM = 12, maxPoints = 120) {
+  function pointsForManual(coords, toleranceM = 8, maxPoints = 160) {
     if (coords.length <= 2) return coords.slice();
 
     const R = 6371000, toRad = (d) => (d * Math.PI) / 180;
@@ -760,50 +766,82 @@
   // tripped Mapbox's DragPan -> the map panned and only one point landed. Now we
   // use ONE target, send a hover move first (so DragPan sees no button held when
   // the pointer arrives), then a down/up at identical coords (= click, not drag).
-  function clickAt(map, canvas, lat, lng) {
+  function clickXY(target, clientX, clientY) {
+    const opts = (type) => ({
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clientX,
+      clientY,
+      screenX: clientX,
+      screenY: clientY,
+      button: 0,
+      buttons: type === "mousedown" || type === "pointerdown" ? 1 : 0,
+    });
+    const ptr = (type) => new PointerEvent(type, {
+      ...opts(type), pointerId: 1, pointerType: "mouse", isPrimary: true,
+    });
+    const mouse = (type) => new MouseEvent(type, opts(type));
+
+    // Hover first (no button) so DragPan is idle, then a clean click.
+    target.dispatchEvent(ptr("pointermove"));
+    target.dispatchEvent(mouse("mousemove"));
+    target.dispatchEvent(ptr("pointerdown"));
+    target.dispatchEvent(mouse("mousedown"));
+    target.dispatchEvent(ptr("pointerup"));
+    target.dispatchEvent(mouse("mouseup"));
+    target.dispatchEvent(mouse("click"));
+  }
+
+  // Is a client point inside the visible map canvas AND clear of our own panel
+  // (which floats over the map's right edge and would otherwise eat the click)?
+  function pointIsClickable(clientX, clientY, canvasRect, panelRect) {
+    const inCanvas =
+      clientX >= canvasRect.left + 4 && clientX <= canvasRect.right - 4 &&
+      clientY >= canvasRect.top + 4 && clientY <= canvasRect.bottom - 4;
+    if (!inCanvas) return false;
+    if (panelRect &&
+        clientX >= panelRect.left - 6 && clientX <= panelRect.right + 6 &&
+        clientY >= panelRect.top - 6 && clientY <= panelRect.bottom + 6) {
+      return false; // would land on our panel
+    }
+    return true;
+  }
+
+  // Place one waypoint. If the projected pixel is off-screen or under our panel,
+  // recenter the map on the point first so it lands in a clear, clickable spot
+  // (manual mode straight-lines between consecutive points, so panning between
+  // them is harmless). Returns {ok, recentered}.
+  async function placePoint(map, canvas, panelRect, lat, lng) {
     try {
-      const point = map.project([lng, lat]); // Point {x, y} in canvas pixels
-      const rect = canvas.getBoundingClientRect();
-      const clientX = rect.left + point.x;
-      const clientY = rect.top + point.y;
-      const onScreen =
-        clientX >= rect.left && clientX <= rect.right &&
-        clientY >= rect.top && clientY <= rect.bottom;
+      const rectOf = () => canvas.getBoundingClientRect();
+      let rect = rectOf();
+      let p = map.project([lng, lat]);
+      let clientX = rect.left + p.x;
+      let clientY = rect.top + p.y;
+      let recentered = false;
 
-      const target =
-        document.elementFromPoint(clientX, clientY) ||
-        (map.getCanvasContainer && map.getCanvasContainer()) ||
-        canvas;
+      if (!pointIsClickable(clientX, clientY, rect, panelRect)) {
+        // Bring the point to the map center (clear of the panel) and retry.
+        map.setCenter([lng, lat]);
+        await sleep(140);
+        rect = rectOf();
+        p = map.project([lng, lat]);
+        clientX = rect.left + p.x;
+        clientY = rect.top + p.y;
+        recentered = true;
+        if (!pointIsClickable(clientX, clientY, rect, panelRect)) {
+          return { ok: false, recentered };
+        }
+      }
 
-      const opts = (type) => ({
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        clientX,
-        clientY,
-        screenX: clientX,
-        screenY: clientY,
-        button: 0,
-        buttons: type === "mousedown" || type === "pointerdown" ? 1 : 0,
-      });
-      const ptr = (type) => new PointerEvent(type, {
-        ...opts(type), pointerId: 1, pointerType: "mouse", isPrimary: true,
-      });
-      const mouse = (type) => new MouseEvent(type, opts(type));
-
-      // Hover first (no button) so DragPan is idle, then a clean click.
-      target.dispatchEvent(ptr("pointermove"));
-      target.dispatchEvent(mouse("mousemove"));
-      target.dispatchEvent(ptr("pointerdown"));
-      target.dispatchEvent(mouse("mousedown"));
-      target.dispatchEvent(ptr("pointerup"));
-      target.dispatchEvent(mouse("mouseup"));
-      target.dispatchEvent(mouse("click"));
-
-      return { ok: true, onScreen, point, target: target.className };
+      const target = document.elementFromPoint(clientX, clientY) ||
+        (map.getCanvasContainer && map.getCanvasContainer()) || canvas;
+      clickXY(target, clientX, clientY);
+      return { ok: true, recentered };
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.warn("[WRP] clickAt failed:", err);
+      console.warn("[WRP] placePoint failed:", err);
       return { ok: false, error: err };
     }
   }
@@ -854,26 +892,30 @@
 
       // eslint-disable-next-line no-console
       console.log("[WRP] create: placing", pts.length, "points via DOM events");
+      const panelEl = document.getElementById("wrp-panel");
+      const panelRect = panelEl ? panelEl.getBoundingClientRect() : null;
       setStatus(`Creating route in Strava… 0/${pts.length} points`);
-      let placed = 0, offscreen = 0;
+      let placed = 0, skipped = 0, recentered = 0;
       for (let i = 0; i < pts.length; i++) {
         const [la, ln] = pts[i];
-        const r = clickAt(map, canvas, la, ln);
-        if (r.ok) placed++;
-        if (r.ok && r.onScreen === false) offscreen++;
+        const r = await placePoint(map, canvas, panelRect, la, ln);
+        if (r.ok) placed++; else skipped++;
+        if (r.recentered) recentered++;
         if (i === 0) {
           // eslint-disable-next-line no-console
           console.log("[WRP] first point:", { lat: la, lng: ln, result: r });
         }
         setStatus(`Creating route in Strava… ${i + 1}/${pts.length} points`);
-        await sleep(120); // give Strava time to register each vertex
+        await sleep(r.recentered ? 60 : 110);
       }
       // eslint-disable-next-line no-console
-      console.log(`[WRP] create done: placed ${placed}/${pts.length}, ${offscreen} off-screen`);
+      console.log(`[WRP] create done: placed ${placed}/${pts.length}, ${skipped} skipped, ${recentered} recentered`);
       setStatus(
-        `Placed ${placed}/${pts.length} points. Review and click Strava's "Save Route".` +
-        (offscreen ? ` (${offscreen} were off-screen.)` : "") +
-        (placed === 0 ? " Nothing registered — see console; we may need a different click channel." : "")
+        `Placed ${placed}/${pts.length} points` +
+        (recentered ? ` (${recentered} via auto-pan)` : "") +
+        `. Review and click Strava's "Save Route".` +
+        (skipped ? ` ${skipped} could not be placed.` : "") +
+        (placed === 0 ? " Nothing registered — see console." : "")
       );
     } catch (err) {
       // eslint-disable-next-line no-console
