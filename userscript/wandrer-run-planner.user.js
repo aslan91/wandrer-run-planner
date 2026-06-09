@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wandrer Run Planner
 // @namespace    https://github.com/aslan91/wandrer-run-planner
-// @version      0.2.0
+// @version      0.3.0
 // @description  Plan Strava runs that maximize untravelled (Wandrer red) paths within a target distance.
 // @match        https://www.strava.com/routes*
 // @match        https://www.strava.com/maps*
@@ -23,14 +23,27 @@
   // GL map, so we read its features straight off the live map instead of
   // refetching/decoding tiles. These knobs control detection:
   const WANDRER = {
-    // A source is considered the Wandrer overlay if its id or tile URLs match.
+    // A source is considered a Wandrer overlay if its id or tile URLs match.
     SOURCE_MATCH: /wandrer/i,
-    // A feature counts as travelled if any of these properties is truthy
-    // (Wandrer uses US spelling). Adjust after running "Detect overlay".
+    // Prefer sources for this activity when several Wandrer sources exist.
+    ACTIVITY_MATCH: /run|foot|walk|hike/i,
+    // Wandrer splits travelled vs untravelled into separate sources/layers, so
+    // a source/source-layer whose name implies "travelled" means EVERY feature
+    // in it is travelled (no per-feature property needed).
+    TRAVELLED_NAME: /travel/i,
+    UNTRAVELLED_NAME: /untravel|not.?travel|undone|missing/i,
+    // Fallback only: if a source is NOT split by name, a feature counts as
+    // travelled when any of these properties is truthy.
     TRAVELLED_KEYS: ["traveled", "travelled", "achieved", "done", "v"],
     // Optional manual override if auto-detection picks the wrong source.
     FORCE_SOURCE_ID: "",
   };
+
+  // Does a source/source-layer NAME imply its features are travelled?
+  function nameImpliesTravelled(name) {
+    if (!name) return false;
+    return WANDRER.TRAVELLED_NAME.test(name) && !WANDRER.UNTRAVELLED_NAME.test(name);
+  }
 
   // Is a feature's property bag marked travelled?
   function isTravelled(props) {
@@ -235,23 +248,19 @@
   $("#wrp-detect").addEventListener("click", onDetect);
 
   // ----------------------------------------------------------------------
-  // Locate the Wandrer vector source + its source-layers within the live
-  // Mapbox GL style.
+  // Enumerate Wandrer vector sources + their source-layers in the live style.
   // ----------------------------------------------------------------------
-  function findWandrerSource(map) {
+  function getWandrerSources(map) {
     const style = map.getStyle && map.getStyle();
-    if (!style || !style.sources) return null;
-
-    if (WANDRER.FORCE_SOURCE_ID && style.sources[WANDRER.FORCE_SOURCE_ID]) {
-      return collectSourceLayers(style, WANDRER.FORCE_SOURCE_ID);
-    }
+    if (!style || !style.sources) return [];
+    const out = [];
     for (const [id, src] of Object.entries(style.sources)) {
-      const hay = JSON.stringify(src) + " " + id;
+      const hay = id + " " + JSON.stringify(src || {});
       if (WANDRER.SOURCE_MATCH.test(hay)) {
-        return collectSourceLayers(style, id);
+        out.push({ id, sourceLayers: collectSourceLayers(style, id).sourceLayers });
       }
     }
-    return null;
+    return out;
   }
 
   function collectSourceLayers(style, sourceId) {
@@ -261,9 +270,50 @@
         sourceLayers.add(layer["source-layer"]);
       }
     }
-    // Vector sources need a source-layer; if none referenced, try empty (some
-    // styles let querySourceFeatures work without it).
     return { sourceId, sourceLayers: [...sourceLayers] };
+  }
+
+  // Query one source, returning its loaded features + travelled extraction.
+  function probeSource(map, s) {
+    const layerArgs = s.sourceLayers.length ? s.sourceLayers : [undefined];
+    const srcTravelled = nameImpliesTravelled(s.id);
+    let total = 0;
+    let travelledCount = 0;
+    const keys = new Set();
+    const polylines = [];
+    const seen = new Set();
+
+    for (const sl of layerArgs) {
+      let feats = [];
+      try {
+        feats = map.querySourceFeatures(s.id, sl ? { sourceLayer: sl } : {});
+      } catch (_e) {
+        continue;
+      }
+      const slTravelled = srcTravelled || nameImpliesTravelled(sl);
+      for (const f of feats) {
+        total++;
+        Object.keys(f.properties || {}).forEach((k) => keys.add(k));
+        const isTrav = slTravelled || isTravelled(f.properties);
+        if (!isTrav) continue;
+        const fid = f.id != null ? `${sl}:${f.id}` : null;
+        if (fid && seen.has(fid)) continue;
+        if (fid) seen.add(fid);
+        travelledCount++;
+        for (const pl of geometryToPolylines(f.geometry)) {
+          if (pl.length >= 2) polylines.push(pl);
+        }
+      }
+    }
+    return {
+      id: s.id,
+      sourceLayers: s.sourceLayers,
+      total,
+      travelled: travelledCount,
+      keys: [...keys],
+      polylines,
+      impliesTravelled: srcTravelled,
+    };
   }
 
   // Convert a GeoJSON geometry (lng/lat) into [lat,lng] polylines.
@@ -279,53 +329,52 @@
   }
 
   // ----------------------------------------------------------------------
-  // Read travelled geometry directly from the live Wandrer overlay source.
+  // Read travelled geometry directly from the live Wandrer overlay sources.
+  // Enumerates all Wandrer sources, probes each, and chooses the best
+  // "travelled" source (preferring the configured activity + most features).
   // Returns { travelled: [[ [lat,lng], ... ], ...], stats }.
   // ----------------------------------------------------------------------
   function readTravelled(map) {
-    const found = findWandrerSource(map);
-    if (!found) {
-      return { travelled: [], stats: { source: null } };
+    let sources = getWandrerSources(map);
+    if (WANDRER.FORCE_SOURCE_ID) {
+      sources = sources.filter((s) => s.id === WANDRER.FORCE_SOURCE_ID);
     }
-    const { sourceId, sourceLayers } = found;
-    const layerArgs = sourceLayers.length ? sourceLayers : [undefined];
-
-    let total = 0;
-    let travelledCount = 0;
-    const sampleKeys = new Set();
-    const polylines = [];
-    const seen = new Set();
-
-    for (const sl of layerArgs) {
-      let feats = [];
-      try {
-        feats = map.querySourceFeatures(sourceId, sl ? { sourceLayer: sl } : {});
-      } catch (_e) {
-        continue;
-      }
-      for (const f of feats) {
-        total++;
-        Object.keys(f.properties || {}).forEach((k) => sampleKeys.add(k));
-        if (!isTravelled(f.properties)) continue;
-        // Deduplicate features split across tiles by id when available.
-        const fid = f.id != null ? `${sl}:${f.id}` : null;
-        if (fid && seen.has(fid)) continue;
-        if (fid) seen.add(fid);
-        travelledCount++;
-        for (const pl of geometryToPolylines(f.geometry)) {
-          if (pl.length >= 2) polylines.push(pl);
-        }
-      }
+    if (!sources.length) {
+      return { travelled: [], stats: { source: null, all: [] } };
     }
+
+    const probes = sources.map((p) => probeSource(map, p));
+    const summary = probes.map((p) => ({
+      id: p.id,
+      total: p.total,
+      travelled: p.travelled,
+      keys: p.keys,
+      sourceLayers: p.sourceLayers,
+      impliesTravelled: p.impliesTravelled,
+    }));
+
+    // Rank candidate travelled sources: must imply travelled (or have travelled
+    // features via properties); prefer the configured activity; then most data.
+    const ranked = probes
+      .filter((p) => p.impliesTravelled || p.travelled > 0)
+      .sort((a, b) => {
+        const aAct = WANDRER.ACTIVITY_MATCH.test(a.id) ? 1 : 0;
+        const bAct = WANDRER.ACTIVITY_MATCH.test(b.id) ? 1 : 0;
+        if (aAct !== bAct) return bAct - aAct;
+        return b.total - a.total;
+      });
+
+    const chosen = ranked.find((p) => p.total > 0) || ranked[0] || probes[0];
 
     return {
-      travelled: polylines,
+      travelled: chosen ? chosen.polylines : [],
       stats: {
-        source: sourceId,
-        sourceLayers,
-        total,
-        travelled: travelledCount,
-        keys: [...sampleKeys],
+        source: chosen ? chosen.id : null,
+        sourceLayers: chosen ? chosen.sourceLayers : [],
+        total: chosen ? chosen.total : 0,
+        travelled: chosen ? chosen.travelled : 0,
+        keys: chosen ? chosen.keys : [],
+        all: summary,
       },
     };
   }
@@ -337,23 +386,30 @@
       return setStatus("Map not found — open the route builder (see console for details).");
     }
     const { stats } = readTravelled(map);
+    // Always log the full picture of every Wandrer source.
+    // eslint-disable-next-line no-console
+    console.log("[WRP] all wandrer sources:", stats.all);
     if (!stats.source) {
       setStatus(
-        "No Wandrer source found. Ensure the overlay is ON, then check " +
-        "SOURCE_MATCH. Open the console for available source ids."
+        "No Wandrer source found. Ensure the overlay is ON. " +
+        "Console lists available source ids."
       );
       try {
         // eslint-disable-next-line no-console
-        console.log("[WRP] sources:", Object.keys(map.getStyle().sources));
+        console.log("[WRP] style sources:", Object.keys(map.getStyle().sources));
       } catch (_e) { /* ignore */ }
       return;
     }
+    const totalAll = (stats.all || []).reduce((n, s) => n + s.total, 0);
     setStatus(
       `Source "${stats.source}" — ${stats.travelled}/${stats.total} travelled ` +
-      `in view. Property keys: ${stats.keys.join(", ") || "(none)"}.`
+      `in view (${totalAll} features across ${stats.all.length} wandrer sources).` +
+      (totalAll === 0
+        ? " No tiles loaded yet — zoom/pan over your run area and retry."
+        : "")
     );
     // eslint-disable-next-line no-console
-    console.log("[WRP] detect:", stats);
+    console.log("[WRP] chosen:", stats);
   }
 
   function postPlan(body) {
