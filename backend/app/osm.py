@@ -13,10 +13,12 @@ from .log import get_logger
 log = get_logger()
 
 # Public Overpass endpoints, tried in order (they are frequently overloaded).
+# kumi.systems is usually the most responsive; the main de endpoint often
+# returns 504 under load, so it goes last.
 OVERPASS_URLS = [
-    "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.openstreetmap.fr/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
 ]
 
 # Overpass rejects requests without a descriptive User-Agent (HTTP 406).

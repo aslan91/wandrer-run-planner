@@ -2,13 +2,18 @@
 # Avoids accidentally using a global Python where FastAPI/uvicorn aren't installed.
 #
 # Usage:
-#   .\run.ps1            # serve on http://127.0.0.1:8000 with autoreload
+#   .\run.ps1            # serve on http://127.0.0.1:8000 (no autoreload)
 #   .\run.ps1 -Port 8080 # custom port
-#   .\run.ps1 -NoReload  # disable autoreload
+#   .\run.ps1 -Reload    # enable autoreload (dev only)
+#
+# Autoreload is OFF by default on purpose: a plan request can take 10-30s
+# (Overpass is often slow / returns 504 and we fall back to another mirror),
+# and any file change while a request is in flight makes uvicorn restart the
+# worker and drop the connection -> the userscript reports "Backend unreachable".
 
 param(
     [int]$Port = 8000,
-    [switch]$NoReload
+    [switch]$Reload
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,7 +25,7 @@ if (-not (Test-Path $python)) {
 }
 
 $uvicornArgs = @("-m", "uvicorn", "app.main:app", "--port", $Port)
-if (-not $NoReload) {
+if ($Reload) {
     $uvicornArgs += @("--reload", "--reload-dir", (Join-Path $here "app"))
 }
 
