@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wandrer Run Planner
 // @namespace    https://github.com/aslan91/wandrer-run-planner
-// @version      0.9.0
+// @version      0.9.1
 // @description  Plan Strava runs that maximize untravelled (Wandrer red) paths within a target distance.
 // @match        https://www.strava.com/routes*
 // @match        https://www.strava.com/maps*
@@ -144,36 +144,84 @@
   }
 
   function findMap() {
-    if (looksLikeMap(cachedMap)) return cachedMap;
+    if (looksLikeMap(cachedMap) && mapIsVisible(cachedMap)) return cachedMap;
+    const all = collectMaps();
+    const best = pickVisibleMap(all);
+    if (best) return (cachedMap = best);
+    return null;
+  }
 
-    // 1. Known globals + constructor-hook captures.
-    const globals = [
+  // True if the map's canvas is attached and has a non-trivial on-screen size.
+  function mapIsVisible(map) {
+    try {
+      const c = map.getCanvas && map.getCanvas();
+      if (!c || !c.isConnected) return false;
+      const r = c.getBoundingClientRect();
+      return r.width > 50 && r.height > 50;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  // Rough on-screen area of a map's canvas (0 if hidden/detached).
+  function mapVisibleArea(map) {
+    try {
+      const c = map.getCanvas && map.getCanvas();
+      if (!c || !c.isConnected) return 0;
+      const r = c.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return 0;
+      // Clip to viewport so an off-screen map scores 0.
+      const vw = window.innerWidth, vh = window.innerHeight;
+      const w = Math.min(r.right, vw) - Math.max(r.left, 0);
+      const h = Math.min(r.bottom, vh) - Math.max(r.top, 0);
+      return w > 0 && h > 0 ? w * h : 0;
+    } catch (_e) {
+      return 0;
+    }
+  }
+
+  // Among candidate maps, prefer the largest one actually visible on screen
+  // (the route-builder map), falling back to any map at all.
+  function pickVisibleMap(maps) {
+    let best = null, bestArea = 0;
+    for (const m of maps) {
+      if (!looksLikeMap(m)) continue;
+      const area = mapVisibleArea(m);
+      if (area > bestArea) { bestArea = area; best = m; }
+    }
+    if (best) return best;
+    return maps.find(looksLikeMap) || null;
+  }
+
+  // Gather every candidate Mapbox map instance: known globals, constructor-hook
+  // captures, and a bounded React-fiber walk from map DOM nodes.
+  function collectMaps() {
+    const out = [];
+    const push = (m) => { if (looksLikeMap(m) && !out.includes(m)) out.push(m); };
+
+    for (const g of [
       window.map,
       window.__map,
       window.routeBuilder && window.routeBuilder.map,
       ...(window.__wrpMaps || []),
-    ];
-    for (const g of globals) {
-      if (looksLikeMap(g)) return (cachedMap = g);
-    }
+    ]) push(g);
 
-    // 2. React fiber walk from the map canvas/container.
     let nodes = [
       ...document.querySelectorAll(".mapboxgl-map, .mapboxgl-canvas, canvas"),
     ];
-    if (nodes.length === 0) {
-      // Last resort: scan every element's fiber (bounded by searchGraph).
-      nodes = [...document.querySelectorAll("div, canvas")];
-    }
+    if (nodes.length === 0) nodes = [...document.querySelectorAll("div, canvas")];
     const roots = [];
     for (const n of nodes) {
       const fiber = getReactFiber(n);
       if (fiber) roots.push(fiber);
     }
-    const found = searchGraph(roots);
-    if (found) return (cachedMap = found);
-
-    return null;
+    // searchGraph returns the first match; run it per-root so we can find the
+    // map attached to each visible canvas, not just the first one anywhere.
+    for (const root of roots) {
+      const found = searchGraph([root]);
+      if (found) push(found);
+    }
+    return out;
   }
 
   // Log what the finder saw, to help diagnose a failed lookup.
@@ -622,6 +670,8 @@
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // Fit the map so the whole route is visible (clicks must land in the canvas).
+  // Returns the route's bounds + centroid so the caller can verify the map
+  // actually moved there.
   function fitRoute(map, coords) {
     let minLat = Infinity, minLng = Infinity, maxLat = -Infinity, maxLng = -Infinity;
     for (const [la, ln] of coords) {
@@ -636,6 +686,20 @@
         { padding: 80, duration: 0, animate: false }
       );
     } catch (_e) { /* ignore */ }
+    return {
+      minLat, minLng, maxLat, maxLng,
+      center: { lat: (minLat + maxLat) / 2, lng: (minLng + maxLng) / 2 },
+    };
+  }
+
+  // Great-circle distance in metres between two {lat,lng}.
+  function distM(a, b) {
+    const R = 6371000, toRad = (d) => (d * Math.PI) / 180;
+    const dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
+    const s =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(s));
   }
 
   // Reduce points for manual mode: keep enough to follow curves but avoid
@@ -762,11 +826,33 @@
       }
 
       const pts = pointsForManual(res.coordinates);
-      fitRoute(map, pts);
-      await sleep(300); // let the map settle after fitBounds
+      const box = fitRoute(map, pts);
+      await sleep(350); // let the map settle after fitBounds
+
+      // Sanity-check: did we move the RIGHT map to the route? If the chosen map
+      // ended up far from the route centroid, we likely grabbed the wrong map
+      // instance (Strava can have several) — abort instead of clicking blindly.
+      let center = null;
+      try { const c = map.getCenter(); center = { lat: c.lat, lng: c.lng }; } catch (_e) { /* */ }
+      const drift = center ? distM(center, box.center) : Infinity;
+      // eslint-disable-next-line no-console
+      console.log("[WRP] create: map check", {
+        mapCenter: center,
+        routeCenter: box.center,
+        driftMeters: Math.round(drift),
+        visibleMaps: collectMaps().map(mapVisibleArea),
+      });
+      if (drift > 3000) {
+        setStatus(
+          `Wrong map detected (center is ${(drift / 1000).toFixed(1)} km from the ` +
+          "route). Click directly on the route-builder map once, then retry Create. " +
+          "Or use Download GPX."
+        );
+        return;
+      }
 
       // eslint-disable-next-line no-console
-      console.log("[WRP] create: placing", pts.length, "points via Mapbox events");
+      console.log("[WRP] create: placing", pts.length, "points via DOM events");
       setStatus(`Creating route in Strava… 0/${pts.length} points`);
       let placed = 0, offscreen = 0;
       for (let i = 0; i < pts.length; i++) {
