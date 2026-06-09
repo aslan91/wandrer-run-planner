@@ -20,7 +20,7 @@ def to_gpx(coords: list[tuple[float, float]], name: str = "Wandrer Run") -> str:
     gpx.description = "Planned to maximize untravelled (Wandrer) paths."
 
     track = gpxpy.gpx.GPXTrack(name=name)
-    track.type = "running"
+    track.type = "running"  # type: ignore[assignment]  # gpxpy stubs type this as None
     gpx.tracks.append(track)
     segment = gpxpy.gpx.GPXTrackSegment()
     track.segments.append(segment)
