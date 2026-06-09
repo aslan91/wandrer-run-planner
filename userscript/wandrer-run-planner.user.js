@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wandrer Run Planner
 // @namespace    https://github.com/aslan91/wandrer-run-planner
-// @version      0.13.2
+// @version      0.14.0
 // @description  Plan runs that maximize untravelled (Wandrer red) paths within a target distance. Reads travelled data natively on wandrer.earth's Big Map, or from the Wandrer overlay on Strava's route builder.
 // @match        https://www.strava.com/routes*
 // @match        https://www.strava.com/maps*
@@ -417,7 +417,8 @@
     : "";
 
   panel.innerHTML = `
-    <div id="wrp-drag" style="font-weight:600;margin:-12px -14px 8px;padding:10px 14px 8px;cursor:move;user-select:none;border-bottom:1px solid #eee;border-radius:10px 10px 0 0">Wandrer Run Planner <span style="font-weight:400;font-size:11px;color:#888">· ${SITE.siteName}</span></div>
+    <div id="wrp-drag" style="display:flex;align-items:center;gap:8px;font-weight:600;margin:-12px -14px 8px;padding:10px 14px 8px;cursor:move;user-select:none;border-bottom:1px solid #eee;border-radius:10px 10px 0 0"><span style="flex:1;min-width:0">Wandrer Run Planner <span style="font-weight:400;font-size:11px;color:#888">· ${SITE.siteName}</span></span><button id="wrp-min" title="Minimize" aria-label="Minimize" style="flex:none;width:22px;height:22px;line-height:1;padding:0;border:1px solid #ccc;border-radius:6px;background:#fff;color:#444;cursor:pointer;font-size:14px">–</button></div>
+    <div id="wrp-body">
     <label style="display:block;margin:6px 0">Target km
       <input id="wrp-km" type="number" value="6" step="0.5" min="1"
              style="width:100%;box-sizing:border-box"></label>
@@ -434,6 +435,7 @@
     <div style="font-size:11px;color:#888;margin:2px 0 4px">Recommended: load the GPX on your watch, or import it (Strava subscribers: Routes → Upload a Route; Garmin/Komoot also work).</div>
     ${createSectionHtml}
     <div id="wrp-status" style="margin-top:6px;font-size:12px;color:#444"></div>
+    </div>
   `;
   // Defensive styles: some host pages (e.g. wandrer.earth) ship aggressive
   // global CSS that can stretch the panel to full height or strip button chrome.
@@ -446,6 +448,29 @@
     "#wrp-panel *{box-sizing:border-box}";
   (document.head || document.documentElement).appendChild(wrpStyle);
   document.body.appendChild(panel);
+
+  // Minimize / restore: collapse the panel to just its title bar so it stays out
+  // of the way when not in use. State is persisted across reloads. The button
+  // stops pointer/click propagation so clicking it never starts a title drag.
+  (function makeCollapsible() {
+    const body = panel.querySelector("#wrp-body");
+    const btn = panel.querySelector("#wrp-min");
+    const apply = (collapsed) => {
+      body.style.display = collapsed ? "none" : "";
+      btn.textContent = collapsed ? "+" : "–";
+      btn.title = btn.ariaLabel = collapsed ? "Restore" : "Minimize";
+    };
+    let collapsed = false;
+    try { collapsed = localStorage.getItem("wrp-collapsed") === "1"; } catch (_e) { /* ignore */ }
+    apply(collapsed);
+    btn.addEventListener("pointerdown", (e) => e.stopPropagation());
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      collapsed = !collapsed;
+      apply(collapsed);
+      try { localStorage.setItem("wrp-collapsed", collapsed ? "1" : "0"); } catch (_e) { /* ignore */ }
+    });
+  })();
 
   // Make the panel draggable by its title bar. Switches from right-anchored to
   // left/top absolute positioning on first drag so it follows the cursor.
