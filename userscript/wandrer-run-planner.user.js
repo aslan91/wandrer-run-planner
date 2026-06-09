@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wandrer Run Planner
 // @namespace    https://github.com/aslan91/wandrer-run-planner
-// @version      0.10.0
+// @version      0.11.0
 // @description  Plan Strava runs that maximize untravelled (Wandrer red) paths within a target distance.
 // @match        https://www.strava.com/routes*
 // @match        https://www.strava.com/maps*
@@ -263,7 +263,7 @@
     "font:13px/1.4 system-ui,sans-serif", "width:240px", "color:#222",
   ].join(";");
   panel.innerHTML = `
-    <div style="font-weight:600;margin-bottom:8px">Wandrer Run Planner</div>
+    <div id="wrp-drag" style="font-weight:600;margin:-12px -14px 8px;padding:10px 14px 8px;cursor:move;user-select:none;border-bottom:1px solid #eee;border-radius:10px 10px 0 0">Wandrer Run Planner</div>
     <label style="display:block;margin:6px 0">Target km
       <input id="wrp-km" type="number" value="6" step="0.5" min="1"
              style="width:100%;box-sizing:border-box"></label>
@@ -286,6 +286,42 @@
     <div id="wrp-status" style="margin-top:6px;font-size:12px;color:#444"></div>
   `;
   document.body.appendChild(panel);
+
+  // Make the panel draggable by its title bar. Switches from right-anchored to
+  // left/top absolute positioning on first drag so it follows the cursor.
+  (function makeDraggable() {
+    const handle = panel.querySelector("#wrp-drag");
+    let dragging = false;
+    let offX = 0;
+    let offY = 0;
+    handle.addEventListener("pointerdown", (e) => {
+      dragging = true;
+      const r = panel.getBoundingClientRect();
+      offX = e.clientX - r.left;
+      offY = e.clientY - r.top;
+      panel.style.right = "auto";
+      panel.style.left = `${r.left}px`;
+      panel.style.top = `${r.top}px`;
+      handle.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+    handle.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      const maxX = window.innerWidth - panel.offsetWidth;
+      const maxY = window.innerHeight - panel.offsetHeight;
+      const x = Math.min(Math.max(0, e.clientX - offX), Math.max(0, maxX));
+      const y = Math.min(Math.max(0, e.clientY - offY), Math.max(0, maxY));
+      panel.style.left = `${x}px`;
+      panel.style.top = `${y}px`;
+    });
+    const end = (e) => {
+      if (!dragging) return;
+      dragging = false;
+      try { handle.releasePointerCapture(e.pointerId); } catch (_e) { /* ignore */ }
+    };
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+  })();
 
   const $ = (id) => panel.querySelector(id);
   const setStatus = (t) => ($("#wrp-status").textContent = t);
