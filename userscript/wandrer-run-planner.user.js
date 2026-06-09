@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Wandrer Run Planner
 // @namespace    https://github.com/aslan91/wandrer-run-planner
-// @version      0.4.0
+// @version      0.5.0
 // @description  Plan Strava runs that maximize untravelled (Wandrer red) paths within a target distance.
 // @match        https://www.strava.com/routes*
 // @match        https://www.strava.com/maps*
 // @match        https://www.strava.com/athlete/maps*
 // @grant        GM_xmlhttpRequest
+// @connect      127.0.0.1
 // @connect      localhost
 // @run-at       document-idle
 // ==/UserScript==
@@ -17,7 +18,9 @@
   // ----------------------------------------------------------------------
   // Config
   // ----------------------------------------------------------------------
-  const BACKEND = "http://localhost:8000/plan";
+  // Use 127.0.0.1 (not "localhost"): on Windows, "localhost" often resolves to
+  // IPv6 ::1 first, but uvicorn binds IPv4 127.0.0.1 only -> connection refused.
+  const BACKEND = "http://127.0.0.1:8000/plan";
 
   // The Wandrer overlay is a vector source already loaded into Strava's Mapbox
   // GL map, so we read its features straight off the live map instead of
@@ -226,6 +229,9 @@
   const setStatus = (t) => ($("#wrp-status").textContent = t);
 
   // Pick start: next click on the map sets the start point.
+  // We listen on the map canvas at the capture phase (and convert the pixel to
+  // lng/lat via map.unproject) because Strava intercepts Mapbox's own "click"
+  // event to drop route waypoints, so map.once("click") never fires for us.
   $("#wrp-pick").addEventListener("click", () => {
     const map = findMap();
     if (!map) {
@@ -233,15 +239,44 @@
       setStatus("Map not found — open the route builder (see console for details).");
       return;
     }
+    const canvas = map.getCanvas ? map.getCanvas() : null;
+    if (!canvas) {
+      setStatus("Map canvas not available.");
+      return;
+    }
     pickingStart = true;
     setStatus("Click the map to set the start…");
-    map.once("click", (e) => {
-      startLatLng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
-      pickingStart = false;
+    canvas.style.cursor = "crosshair";
+
+    const onCanvasClick = (ev) => {
+      // Stop Strava from also handling this click (adding a waypoint).
+      ev.preventDefault();
+      ev.stopPropagation();
+      const rect = canvas.getBoundingClientRect();
+      const point = [ev.clientX - rect.left, ev.clientY - rect.top];
+      let lngLat;
+      try {
+        lngLat = map.unproject(point);
+      } catch (_e) {
+        setStatus("Could not read map coordinate; try again.");
+        cleanup();
+        return;
+      }
+      startLatLng = { lat: lngLat.lat, lng: lngLat.lng };
       $("#wrp-start").textContent =
         `start: ${startLatLng.lat.toFixed(5)}, ${startLatLng.lng.toFixed(5)}`;
       setStatus("Start set.");
-    });
+      cleanup();
+    };
+
+    const cleanup = () => {
+      pickingStart = false;
+      canvas.style.cursor = "";
+      canvas.removeEventListener("click", onCanvasClick, true);
+    };
+
+    // Capture phase + { once } so it fires before Strava and only once.
+    canvas.addEventListener("click", onCanvasClick, { capture: true, once: true });
   });
 
   $("#wrp-plan").addEventListener("click", onPlan);
@@ -435,7 +470,15 @@
           r.status >= 200 && r.status < 300
             ? resolve(JSON.parse(r.responseText))
             : reject(new Error(`${r.status}: ${r.responseText}`)),
-        onerror: () => reject(new Error("Backend unreachable (is it running on :8000?)")),
+        onerror: () =>
+          reject(
+            new Error(
+              "Backend unreachable. Is it running on 127.0.0.1:8000? " +
+              "If you changed @connect, re-grant the script's connect permission."
+            )
+          ),
+        ontimeout: () => reject(new Error("Backend request timed out.")),
+        timeout: 120000,
       });
     });
   }
