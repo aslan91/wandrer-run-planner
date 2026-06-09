@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wandrer Run Planner
 // @namespace    https://github.com/aslan91/wandrer-run-planner
-// @version      0.9.1
+// @version      0.9.2
 // @description  Plan Strava runs that maximize untravelled (Wandrer red) paths within a target distance.
 // @match        https://www.strava.com/routes*
 // @match        https://www.strava.com/maps*
@@ -750,15 +750,15 @@
     return pts;
   }
 
-  // Add one waypoint by emitting a synthetic click on Strava's map canvas.
+  // Add one waypoint by emitting a synthetic click on Strava's map.
   //
-  // map.fire('click', …) reaches Mapbox's internal event bus but Strava's manual
-  // builder did NOT react to it — it listens to real DOM events on the canvas
-  // (which Mapbox itself turns into a map 'click'). So we dispatch a genuine
-  // pointer+mouse+click gesture on the canvas element at the projected pixel.
-  // The browser does not synthesize 'click' from synthetic mousedown/up, so we
-  // emit it explicitly. Same point for down+up => Mapbox treats it as a click,
-  // not a drag.
+  // Mapbox attaches its interaction handlers to the canvas CONTAINER, not the
+  // <canvas>, and a cursor overlay (Map_cursorCrosshairAndGrabbing…) sits on top
+  // intercepting pointer events. Dispatching to the overlay (or to two targets)
+  // confused Mapbox's drag state -> the map panned and points landed wrong. So
+  // we dispatch the whole gesture to a SINGLE correct target: getCanvasContainer().
+  // dispatchEvent delivers there directly regardless of z-order. A pointermove
+  // first sets the hover position; identical down/up points => a click, not a drag.
   function clickAt(map, canvas, lat, lng) {
     try {
       const point = map.project([lng, lat]); // Point {x, y} in canvas pixels
@@ -768,6 +768,9 @@
       const onScreen =
         clientX >= rect.left && clientX <= rect.right &&
         clientY >= rect.top && clientY <= rect.bottom;
+
+      const target =
+        (map.getCanvasContainer && map.getCanvasContainer()) || canvas;
 
       const opts = (type) => ({
         bubbles: true,
@@ -780,26 +783,20 @@
         button: 0,
         buttons: type === "mousedown" || type === "pointerdown" ? 1 : 0,
       });
-      const ptrOpts = (type) => ({
-        ...opts(type),
-        pointerId: 1,
-        pointerType: "mouse",
-        isPrimary: true,
+      const ptr = (type) => new PointerEvent(type, {
+        ...opts(type), pointerId: 1, pointerType: "mouse", isPrimary: true,
       });
+      const mouse = (type) => new MouseEvent(type, opts(type));
 
-      // The element actually under the point (Mapbox listens on the canvas, but
-      // an overlay may sit on top); dispatch to both to be safe.
-      const top = document.elementFromPoint(clientX, clientY) || canvas;
-      const targets = top === canvas ? [canvas] : [top, canvas];
+      target.dispatchEvent(ptr("pointermove"));
+      target.dispatchEvent(mouse("mousemove"));
+      target.dispatchEvent(ptr("pointerdown"));
+      target.dispatchEvent(mouse("mousedown"));
+      target.dispatchEvent(ptr("pointerup"));
+      target.dispatchEvent(mouse("mouseup"));
+      target.dispatchEvent(mouse("click"));
 
-      for (const target of targets) {
-        target.dispatchEvent(new PointerEvent("pointerdown", ptrOpts("pointerdown")));
-        target.dispatchEvent(new MouseEvent("mousedown", opts("mousedown")));
-        target.dispatchEvent(new PointerEvent("pointerup", ptrOpts("pointerup")));
-        target.dispatchEvent(new MouseEvent("mouseup", opts("mouseup")));
-        target.dispatchEvent(new MouseEvent("click", opts("click")));
-      }
-      return { ok: true, onScreen, point, target: top && top.className };
+      return { ok: true, onScreen, point, target: target.className };
     } catch (err) {
       // eslint-disable-next-line no-console
       console.warn("[WRP] clickAt failed:", err);
