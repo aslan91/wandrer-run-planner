@@ -92,6 +92,6 @@ which still produces a valid (just not Wandrer-aware) route.
 - [x] CLI for browser-free testing
 - [x] Userscript: panel, pick-start, plan, draw route
 - [x] Live Wandrer overlay read via `querySourceFeatures` + auto-detect
-- [ ] "Create route in Strava" via builder save endpoint
+- [x] "Create route in Strava" via manual-mode point replay (+ GPX download fallback)
 
 This is a private project. Not affiliated with Strava or Wandrer.

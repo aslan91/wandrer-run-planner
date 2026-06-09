@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wandrer Run Planner
 // @namespace    https://github.com/aslan91/wandrer-run-planner
-// @version      0.6.0
+// @version      0.7.0
 // @description  Plan Strava runs that maximize untravelled (Wandrer red) paths within a target distance.
 // @match        https://www.strava.com/routes*
 // @match        https://www.strava.com/maps*
@@ -221,6 +221,8 @@
     <div id="wrp-start" style="color:#888;font-size:12px;margin:2px 0">start: (none)</div>
     <button id="wrp-detect" style="width:100%;margin:6px 0;padding:6px">Detect overlay</button>
     <button id="wrp-plan" style="width:100%;margin:6px 0;padding:6px;background:#fc4c02;color:#fff;border:none;border-radius:6px">Plan route</button>
+    <button id="wrp-create" style="width:100%;margin:6px 0;padding:6px" disabled>Create in Strava (manual)</button>
+    <button id="wrp-gpx" style="width:100%;margin:6px 0;padding:6px" disabled>Download GPX</button>
     <div id="wrp-status" style="margin-top:6px;font-size:12px;color:#444"></div>
   `;
   document.body.appendChild(panel);
@@ -317,6 +319,8 @@
 
   $("#wrp-plan").addEventListener("click", onPlan);
   $("#wrp-detect").addEventListener("click", onDetect);
+  $("#wrp-create").addEventListener("click", onCreate);
+  $("#wrp-gpx").addEventListener("click", onDownloadGpx);
 
   // ----------------------------------------------------------------------
   // Enumerate Wandrer vector sources + their source-layers in the live style.
@@ -565,10 +569,200 @@
         `Done: ${res.distance_km} km, new ${res.new_km} km ` +
         `(${res.coverage_pct}% new), repeat ${res.repeat_km} km.`
       );
-      // Stash for the next step (create-in-Strava).
+      // Stash for create-in-Strava / GPX download and enable those buttons.
       window.__wrpLast = res;
+      $("#wrp-create").disabled = false;
+      $("#wrp-gpx").disabled = false;
     } catch (err) {
       setStatus("Error: " + err.message);
     }
+  }
+
+  // --------------------------------------------------------------------------
+  // Create the planned route inside Strava's builder using MANUAL mode.
+  // In manual mode Strava draws straight segments between clicked points and
+  // does NOT snap/re-route, so replaying our points reproduces the path exactly.
+  // --------------------------------------------------------------------------
+
+  // Find Strava's "Manual mode" toggle row and its checkbox/switch, if present.
+  function findManualToggle() {
+    const labels = [...document.querySelectorAll("*")].filter(
+      (el) =>
+        el.children.length === 0 &&
+        /manual mode/i.test(el.textContent || "")
+    );
+    for (const lbl of labels) {
+      // Walk up a few levels to find a row containing a toggle control.
+      let row = lbl;
+      for (let i = 0; i < 4 && row; i++, row = row.parentElement) {
+        const input = row.querySelector('input[type="checkbox"], [role="switch"]');
+        if (input) return { row, input };
+      }
+    }
+    return null;
+  }
+
+  function isManualOn(toggle) {
+    if (!toggle) return false;
+    const el = toggle.input;
+    if (el.matches('input[type="checkbox"]')) return el.checked;
+    const aria = el.getAttribute("aria-checked");
+    return aria === "true";
+  }
+
+  async function ensureManualMode() {
+    const toggle = findManualToggle();
+    if (!toggle) return { ok: false, reason: "no-toggle" };
+    if (isManualOn(toggle)) return { ok: true };
+    toggle.input.click();
+    await sleep(200);
+    return { ok: isManualOn(toggle), reason: isManualOn(toggle) ? null : "click-failed" };
+  }
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // Fit the map so the whole route is visible (clicks must land in the canvas).
+  function fitRoute(map, coords) {
+    let minLat = Infinity, minLng = Infinity, maxLat = -Infinity, maxLng = -Infinity;
+    for (const [la, ln] of coords) {
+      if (la < minLat) minLat = la;
+      if (la > maxLat) maxLat = la;
+      if (ln < minLng) minLng = ln;
+      if (ln > maxLng) maxLng = ln;
+    }
+    try {
+      map.fitBounds(
+        [[minLng, minLat], [maxLng, maxLat]],
+        { padding: 80, duration: 0, animate: false }
+      );
+    } catch (_e) { /* ignore */ }
+  }
+
+  // Reduce points for manual mode: keep enough to follow curves but avoid
+  // hundreds of clicks. Ramer–Douglas–Peucker on [lat,lng], capped at maxPoints.
+  function pointsForManual(coords, toleranceM = 12, maxPoints = 120) {
+    if (coords.length <= 2) return coords.slice();
+
+    const R = 6371000, toRad = (d) => (d * Math.PI) / 180;
+    const hav = (a, b) => {
+      const dLat = toRad(b[0] - a[0]); const dLng = toRad(b[1] - a[1]);
+      const s =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(a[0])) * Math.cos(toRad(b[0])) * Math.sin(dLng / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(s));
+    };
+    const perp = (p, a, b) => {
+      const da = hav(p, a), db = hav(p, b), ab = hav(a, b);
+      if (ab === 0) return da;
+      const s = (da + db + ab) / 2;
+      const area = Math.sqrt(Math.max(0, s * (s - da) * (s - db) * (s - ab)));
+      return (2 * area) / ab;
+    };
+
+    const keep = new Array(coords.length).fill(false);
+    keep[0] = keep[coords.length - 1] = true;
+    const stack = [[0, coords.length - 1]];
+    while (stack.length) {
+      const [lo, hi] = stack.pop();
+      if (hi <= lo + 1) continue;
+      let maxD = -1, idx = lo;
+      for (let i = lo + 1; i < hi; i++) {
+        const d = perp(coords[i], coords[lo], coords[hi]);
+        if (d > maxD) { maxD = d; idx = i; }
+      }
+      if (maxD > toleranceM) {
+        keep[idx] = true;
+        stack.push([lo, idx], [idx, hi]);
+      }
+    }
+    let pts = coords.filter((_, i) => keep[i]);
+    if (pts.length > maxPoints) {
+      const step = pts.length / maxPoints;
+      const out = [];
+      for (let i = 0; i < maxPoints; i++) out.push(pts[Math.floor(i * step)]);
+      out[out.length - 1] = coords[coords.length - 1];
+      pts = out;
+    }
+    return pts;
+  }
+
+  // Dispatch a realistic click on the map canvas at a given lng/lat.
+  function clickAt(map, canvas, lat, lng) {
+    const p = map.project([lng, lat]); // {x, y} in canvas pixels
+    const rect = canvas.getBoundingClientRect();
+    const clientX = rect.left + p.x;
+    const clientY = rect.top + p.y;
+    if (
+      clientX < rect.left || clientX > rect.right ||
+      clientY < rect.top || clientY > rect.bottom
+    ) {
+      return false; // point off-screen; skip
+    }
+    const base = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX,
+      clientY,
+      button: 0,
+    };
+    const target = document.elementFromPoint(clientX, clientY) || canvas;
+    target.dispatchEvent(new PointerEvent("pointerdown", { ...base, pointerId: 1 }));
+    target.dispatchEvent(new MouseEvent("mousedown", base));
+    target.dispatchEvent(new PointerEvent("pointerup", { ...base, pointerId: 1 }));
+    target.dispatchEvent(new MouseEvent("mouseup", base));
+    target.dispatchEvent(new MouseEvent("click", base));
+    return true;
+  }
+
+  async function onCreate() {
+    const res = window.__wrpLast;
+    if (!res) return setStatus("Plan a route first.");
+    const map = findMap();
+    if (!map) return setStatus("Map not found.");
+    const canvas = map.getCanvas && map.getCanvas();
+    if (!canvas) return setStatus("Map canvas not available.");
+
+    const manual = await ensureManualMode();
+    if (!manual.ok) {
+      setStatus(
+        "Enable Strava's \"Manual mode\" toggle first, then click Create again " +
+        "(could not toggle it automatically)."
+      );
+      return;
+    }
+
+    const pts = pointsForManual(res.coordinates);
+    fitRoute(map, pts);
+    await sleep(300); // let the map settle after fitBounds
+
+    setStatus(`Creating route in Strava… 0/${pts.length} points`);
+    let placed = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const [la, ln] = pts[i];
+      const ok = clickAt(map, canvas, la, ln);
+      if (ok) placed++;
+      if (i % 5 === 0) setStatus(`Creating route in Strava… ${i + 1}/${pts.length}`);
+      await sleep(90); // give Strava time to register each vertex
+    }
+    setStatus(
+      `Placed ${placed}/${pts.length} points. Review and click Strava's "Save Route". ` +
+      (placed < pts.length ? "Some points were off-screen and skipped." : "")
+    );
+  }
+
+  function onDownloadGpx() {
+    const res = window.__wrpLast;
+    if (!res || !res.gpx) return setStatus("Plan a route first.");
+    const blob = new Blob([res.gpx], { type: "application/gpx+xml" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `wandrer-run-${res.distance_km}km.gpx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    setStatus("GPX downloaded. Import via Strava → Routes → Upload, or load on your watch.");
   }
 })();
