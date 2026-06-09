@@ -24,14 +24,17 @@ _CACHE_TTL_S = 7 * 24 * 3600  # a week
 
 # Public Overpass endpoints with free, global, no-key coverage, per the official
 # wiki list (https://wiki.openstreetmap.org/wiki/Overpass_API#Public_Overpass_API_instances).
-# private.coffee (formerly kumi.systems) advertises no rate limit, so it leads;
-# overpass-api.de is the high-capacity fallback (often 504s under load). The
-# other historical mirrors are unusable here: maps.mail.ru is suspended (403),
-# overpass.osm.ch is Switzerland-only, openstreetmap.fr 403s. Results are cached
-# on disk anyway, so a slow first fetch only happens once per area.
-OVERPASS_URLS = [
-    "https://overpass.private.coffee/api/interpreter",
-    "https://overpass-api.de/api/interpreter",
+# overpass-api.de is the high-capacity main instance (2x16 cores); its 504s are
+# transient load spikes, so we retry it. private.coffee (formerly kumi.systems)
+# advertises no rate limit but is often unresponsive, so it's a fast-failing
+# fallback. The other historical mirrors are unusable here: maps.mail.ru is
+# suspended (403), overpass.osm.ch is Switzerland-only, openstreetmap.fr 403s.
+# Results are cached on disk anyway, so a slow first fetch only happens once.
+# Each entry: (url, read_timeout_s). A short read timeout on a chronically slow
+# mirror means we cycle back to retrying the main instance sooner.
+OVERPASS_MIRRORS = [
+    ("https://overpass-api.de/api/interpreter", 40),
+    ("https://overpass.private.coffee/api/interpreter", 12),
 ]
 
 # Overpass rejects requests without a descriptive User-Agent (HTTP 406).
@@ -112,8 +115,10 @@ def fetch_overpass(lat: float, lng: float, radius_m: float, timeout: int = 25) -
         return cached
 
     last_error: Exception | None = None
-    for attempt in range(3):
-        for url in OVERPASS_URLS:
+    # Overpass 504s are transient load spikes (the same query often succeeds on
+    # a retry seconds later), so we make several passes with a growing backoff.
+    for attempt in range(5):
+        for url, read_timeout in OVERPASS_MIRRORS:
             try:
                 log.info("overpass try %d: %s", attempt + 1, url)
                 resp = requests.post(
@@ -122,7 +127,7 @@ def fetch_overpass(lat: float, lng: float, radius_m: float, timeout: int = 25) -
                     headers=_HEADERS,
                     # (connect, read) timeouts: bail on a stalled mirror quickly
                     # so we fail over to the next one instead of hanging.
-                    timeout=(10, timeout + 5),
+                    timeout=(10, read_timeout),
                 )
                 if resp.status_code in (429, 502, 503, 504):
                     last_error = requests.HTTPError(f"{resp.status_code} from {url}")
