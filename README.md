@@ -83,7 +83,9 @@ contents into a new userscript. The backend must be running locally (see
 *Quick start* above) for planning to work. Open either **wandrer.earth → Big
 Map** or the **Strava route builder**; a **Wandrer Run Planner** panel appears
 (drag it by its title bar to reposition; the position is remembered). The panel
-title shows which site you're on.
+title shows which site you're on. Use the **– / +** button in the title bar to
+minimize the panel to just its header when you're not using it (the collapsed
+state is also remembered across reloads).
 
 ### One-time: confirm travelled data is detected
 
@@ -92,7 +94,8 @@ it finds your data:
 
 1. Open **wandrer.earth → Big Map**, or the Strava route builder with the
    Wandrer overlay enabled.
-2. In the panel, click **Detect overlay**.
+2. In the panel, click **Detect travelled** (labelled **Detect overlay** on
+   Strava).
 3. The status line reports the matched source, how many segments in view are
    travelled, the number of OSM ids found, and the available property keys.
 4. If travelled count is 0 but you know you've run there, zoom/pan so the area
