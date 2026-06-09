@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wandrer Run Planner
 // @namespace    https://github.com/aslan91/wandrer-run-planner
-// @version      0.9.2
+// @version      0.9.3
 // @description  Plan Strava runs that maximize untravelled (Wandrer red) paths within a target distance.
 // @match        https://www.strava.com/routes*
 // @match        https://www.strava.com/maps*
@@ -752,13 +752,14 @@
 
   // Add one waypoint by emitting a synthetic click on Strava's map.
   //
-  // Mapbox attaches its interaction handlers to the canvas CONTAINER, not the
-  // <canvas>, and a cursor overlay (Map_cursorCrosshairAndGrabbing…) sits on top
-  // intercepting pointer events. Dispatching to the overlay (or to two targets)
-  // confused Mapbox's drag state -> the map panned and points landed wrong. So
-  // we dispatch the whole gesture to a SINGLE correct target: getCanvasContainer().
-  // dispatchEvent delivers there directly regardless of z-order. A pointermove
-  // first sets the hover position; identical down/up points => a click, not a drag.
+  // Evidence from live testing: dispatching to the cursor overlay element that
+  // sits under the point (Map_cursorCrosshairAndGrabbing…) DID place a point;
+  // dispatching to getCanvasContainer() placed none. So the element at the
+  // pixel (elementFromPoint) is the correct, single target. Earlier we also hit
+  // the <canvas> as a second target, which interleaved two pointer streams and
+  // tripped Mapbox's DragPan -> the map panned and only one point landed. Now we
+  // use ONE target, send a hover move first (so DragPan sees no button held when
+  // the pointer arrives), then a down/up at identical coords (= click, not drag).
   function clickAt(map, canvas, lat, lng) {
     try {
       const point = map.project([lng, lat]); // Point {x, y} in canvas pixels
@@ -770,7 +771,9 @@
         clientY >= rect.top && clientY <= rect.bottom;
 
       const target =
-        (map.getCanvasContainer && map.getCanvasContainer()) || canvas;
+        document.elementFromPoint(clientX, clientY) ||
+        (map.getCanvasContainer && map.getCanvasContainer()) ||
+        canvas;
 
       const opts = (type) => ({
         bubbles: true,
@@ -788,6 +791,7 @@
       });
       const mouse = (type) => new MouseEvent(type, opts(type));
 
+      // Hover first (no button) so DragPan is idle, then a clean click.
       target.dispatchEvent(ptr("pointermove"));
       target.dispatchEvent(mouse("mousemove"));
       target.dispatchEvent(ptr("pointerdown"));
