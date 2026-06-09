@@ -1,5 +1,8 @@
 # Wandrer Run Planner
 
+[![CI](https://github.com/aslan91/wandrer-run-planner/actions/workflows/ci.yml/badge.svg)](https://github.com/aslan91/wandrer-run-planner/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Plan running routes that **maximize coverage of untravelled paths** (the red
 segments in the [Wandrer](https://wandrer.earth/) overlay) within a target
 distance, while reusing already‑run (green) paths and repeating segments only
