@@ -61,9 +61,18 @@ uvicorn app.main:app --reload --port 8000
 
 ## Userscript
 
-Install [Tampermonkey](https://www.tampermonkey.net/), then add
-`userscript/wandrer-run-planner.user.js`. Open the Strava route builder; a
-**Wandrer Run Planner** panel appears.
+Install a userscript manager ([Tampermonkey](https://www.tampermonkey.net/) or
+[Violentmonkey](https://violentmonkey.github.io/)), then install the script
+directly from the raw URL (the manager will offer an install prompt and keep it
+up to date automatically):
+
+<https://raw.githubusercontent.com/aslan91/wandrer-run-planner/main/userscript/wandrer-run-planner.user.js>
+
+Alternatively, open `userscript/wandrer-run-planner.user.js` and paste its
+contents into a new userscript. The backend must be running locally (see
+*Quick start* above) for planning to work. Open the Strava route builder; a
+**Wandrer Run Planner** panel appears (drag it by its title bar to reposition;
+the position is remembered).
 
 ### One-time: confirm the overlay is detected
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wandrer Run Planner
 // @namespace    https://github.com/aslan91/wandrer-run-planner
-// @version      0.11.0
+// @version      0.12.0
 // @description  Plan Strava runs that maximize untravelled (Wandrer red) paths within a target distance.
 // @match        https://www.strava.com/routes*
 // @match        https://www.strava.com/maps*
@@ -318,9 +318,28 @@
       if (!dragging) return;
       dragging = false;
       try { handle.releasePointerCapture(e.pointerId); } catch (_e) { /* ignore */ }
+      // Persist the position so it survives page reloads.
+      try {
+        localStorage.setItem(
+          "wrp-pos",
+          JSON.stringify({ left: panel.style.left, top: panel.style.top })
+        );
+      } catch (_e) { /* storage blocked — non-fatal */ }
     };
     handle.addEventListener("pointerup", end);
     handle.addEventListener("pointercancel", end);
+
+    // Restore a previously saved position (clamped to the current viewport).
+    try {
+      const saved = JSON.parse(localStorage.getItem("wrp-pos") || "null");
+      if (saved && saved.left && saved.top) {
+        const left = Math.min(parseInt(saved.left, 10) || 0, window.innerWidth - 80);
+        const top = Math.min(parseInt(saved.top, 10) || 0, window.innerHeight - 40);
+        panel.style.right = "auto";
+        panel.style.left = `${Math.max(0, left)}px`;
+        panel.style.top = `${Math.max(0, top)}px`;
+      }
+    } catch (_e) { /* ignore malformed/blocked storage */ }
   })();
 
   const $ = (id) => panel.querySelector(id);
