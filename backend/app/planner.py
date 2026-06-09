@@ -12,8 +12,14 @@ log = get_logger()
 
 
 def _radius_for_target(target_km: float) -> float:
-    """Search radius (m) around the start. Enough to reach out and loop back."""
-    return max(800.0, min(8000.0, target_km * 1000.0 * 0.6))
+    """Search radius (m) around the start. Enough to reach out and loop back.
+
+    A closed loop of length L stays geometrically compact (a perfect circle of
+    circumference L has radius L/2pi ~= 0.16*L), so a search radius near
+    0.35*L gives plenty of room for detours while keeping the Overpass query
+    small and fast. Oversized radii make Overpass slow/time out.
+    """
+    return max(600.0, min(4000.0, target_km * 1000.0 * 0.35))
 
 
 def plan(req: PlanRequest) -> PlanResponse:

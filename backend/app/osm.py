@@ -2,7 +2,10 @@
 a routing graph."""
 from __future__ import annotations
 
+import hashlib
+import json
 import time
+from pathlib import Path
 
 import networkx as nx
 import requests
@@ -12,13 +15,19 @@ from .log import get_logger
 
 log = get_logger()
 
-# Public Overpass endpoints, tried in order (they are frequently overloaded).
-# kumi.systems is usually the most responsive; the main de endpoint often
-# returns 504 under load, so it goes last.
+# On-disk cache of raw Overpass responses. OSM road geometry changes slowly, so
+# re-planning the same area should not hammer (slow, flaky) public Overpass
+# servers again. Travelled state is supplied separately by the userscript, so
+# caching the road network here is safe.
+_CACHE_DIR = Path(__file__).resolve().parent.parent / ".cache" / "overpass"
+_CACHE_TTL_S = 7 * 24 * 3600  # a week
+
+# Public Overpass endpoints, tried in order (they are frequently overloaded, so
+# we fall through fast on timeout/5xx and the result is cached on disk anyway).
 OVERPASS_URLS = [
+    "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.openstreetmap.fr/api/interpreter",
-    "https://overpass-api.de/api/interpreter",
 ]
 
 # Overpass rejects requests without a descriptive User-Agent (HTTP 406).
@@ -47,11 +56,37 @@ _RUNNABLE = {
 }
 
 
-def fetch_overpass(lat: float, lng: float, radius_m: float, timeout: int = 60) -> dict:
+def _cache_path(query: str) -> Path:
+    key = hashlib.sha256(query.encode("utf-8")).hexdigest()[:16]
+    return _CACHE_DIR / f"{key}.json"
+
+
+def _read_cache(path: Path) -> dict | None:
+    try:
+        if not path.exists():
+            return None
+        if time.time() - path.stat().st_mtime > _CACHE_TTL_S:
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _write_cache(path: Path, data: dict) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data), encoding="utf-8")
+    except OSError as exc:
+        log.info("overpass cache write failed: %s", exc)
+
+
+def fetch_overpass(lat: float, lng: float, radius_m: float, timeout: int = 25) -> dict:
     """Query Overpass for highways around a point. Returns raw JSON.
 
-    Tries each public endpoint with retries, since they are often overloaded
-    (HTTP 429/504) or temporarily unreachable.
+    Results are cached on disk (keyed by the exact query) so repeated planning
+    in the same area is instant and avoids the slow/flaky public servers. Tries
+    each public endpoint with a short per-request timeout so a stuck mirror
+    fails fast and we move on, instead of blocking until the userscript gives up.
     """
     query = f"""
     [out:json][timeout:{timeout}];
@@ -61,13 +96,20 @@ def fetch_overpass(lat: float, lng: float, radius_m: float, timeout: int = 60) -
     (._;>;);
     out;
     """
+
+    cache_file = _cache_path(query)
+    cached = _read_cache(cache_file)
+    if cached is not None:
+        log.info("overpass cache hit: %d elements", len(cached.get("elements", [])))
+        return cached
+
     last_error: Exception | None = None
     for attempt in range(3):
         for url in OVERPASS_URLS:
             try:
                 log.info("overpass try %d: %s", attempt + 1, url)
                 resp = requests.post(
-                    url, data={"data": query}, headers=_HEADERS, timeout=timeout + 10
+                    url, data={"data": query}, headers=_HEADERS, timeout=timeout + 5
                 )
                 if resp.status_code in (429, 502, 503, 504):
                     last_error = requests.HTTPError(f"{resp.status_code} from {url}")
@@ -76,6 +118,7 @@ def fetch_overpass(lat: float, lng: float, radius_m: float, timeout: int = 60) -
                 resp.raise_for_status()
                 js = resp.json()
                 log.info("overpass ok: %d elements", len(js.get("elements", [])))
+                _write_cache(cache_file, js)
                 return js
             except requests.RequestException as exc:
                 last_error = exc
