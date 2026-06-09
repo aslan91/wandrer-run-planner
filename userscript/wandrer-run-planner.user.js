@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wandrer Run Planner
 // @namespace    https://github.com/aslan91/wandrer-run-planner
-// @version      0.5.0
+// @version      0.6.0
 // @description  Plan Strava runs that maximize untravelled (Wandrer red) paths within a target distance.
 // @match        https://www.strava.com/routes*
 // @match        https://www.strava.com/maps*
@@ -228,10 +228,13 @@
   const $ = (id) => panel.querySelector(id);
   const setStatus = (t) => ($("#wrp-status").textContent = t);
 
-  // Pick start: next click on the map sets the start point.
-  // We listen on the map canvas at the capture phase (and convert the pixel to
-  // lng/lat via map.unproject) because Strava intercepts Mapbox's own "click"
-  // event to drop route waypoints, so map.once("click") never fires for us.
+  // Pick start: the next click anywhere over the map sets the start point.
+  //
+  // We listen on the document at the CAPTURE phase (not on the canvas) because
+  // Strava stacks overlay elements (marker layers, interaction divs) above the
+  // Mapbox canvas, so the click target is usually NOT the canvas. Capturing at
+  // the document lets us intercept the click first, regardless of which child
+  // was hit, then convert the pixel to lng/lat via map.unproject().
   $("#wrp-pick").addEventListener("click", () => {
     const map = findMap();
     if (!map) {
@@ -240,19 +243,56 @@
       return;
     }
     const canvas = map.getCanvas ? map.getCanvas() : null;
-    if (!canvas) {
+    const container = map.getContainer ? map.getContainer() : null;
+    if (!canvas || !container) {
       setStatus("Map canvas not available.");
       return;
     }
     pickingStart = true;
     setStatus("Click the map to set the start…");
-    canvas.style.cursor = "crosshair";
+    const prevCursor = container.style.cursor;
+    container.style.cursor = "crosshair";
 
-    const onCanvasClick = (ev) => {
-      // Stop Strava from also handling this click (adding a waypoint).
+    const cleanup = () => {
+      pickingStart = false;
+      container.style.cursor = prevCursor;
+      document.removeEventListener("click", onDocClick, true);
+      document.removeEventListener("pointerdown", swallow, true);
+      document.removeEventListener("mousedown", swallow, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+
+    // Cancel with Escape.
+    const onKey = (ev) => {
+      if (ev.key === "Escape") {
+        setStatus("Start pick cancelled.");
+        cleanup();
+      }
+    };
+
+    // Swallow the press that precedes the click so Strava doesn't start a
+    // waypoint drag on pointerdown/mousedown.
+    const swallow = (ev) => {
+      const r = canvas.getBoundingClientRect();
+      if (
+        ev.clientX >= r.left && ev.clientX <= r.right &&
+        ev.clientY >= r.top && ev.clientY <= r.bottom
+      ) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+    };
+
+    const onDocClick = (ev) => {
+      const rect = canvas.getBoundingClientRect();
+      const inside =
+        ev.clientX >= rect.left && ev.clientX <= rect.right &&
+        ev.clientY >= rect.top && ev.clientY <= rect.bottom;
+      if (!inside) return; // ignore clicks outside the map (e.g. on the panel)
+
       ev.preventDefault();
       ev.stopPropagation();
-      const rect = canvas.getBoundingClientRect();
+
       const point = [ev.clientX - rect.left, ev.clientY - rect.top];
       let lngLat;
       try {
@@ -269,14 +309,10 @@
       cleanup();
     };
 
-    const cleanup = () => {
-      pickingStart = false;
-      canvas.style.cursor = "";
-      canvas.removeEventListener("click", onCanvasClick, true);
-    };
-
-    // Capture phase + { once } so it fires before Strava and only once.
-    canvas.addEventListener("click", onCanvasClick, { capture: true, once: true });
+    document.addEventListener("pointerdown", swallow, true);
+    document.addEventListener("mousedown", swallow, true);
+    document.addEventListener("click", onDocClick, true);
+    document.addEventListener("keydown", onKey, true);
   });
 
   $("#wrp-plan").addEventListener("click", onPlan);
