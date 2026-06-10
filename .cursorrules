@@ -1,0 +1,14 @@
+# AI Instructions - strava-bot
+
+Please refer to the detailed instructions in [.github/copilot-instructions.md](.github/copilot-instructions.md) for full context, commands, architecture details, and coding conventions.
+
+## Quick Lint & Test Rules:
+- **Linting:** Code must be linted and formatted before commit. Always run:
+  ```bash
+  ruff check .
+  ruff format .
+  ```
+- **Tests:** Always run unit tests locally to verify correctness:
+  ```bash
+  python -m pytest
+  ```
