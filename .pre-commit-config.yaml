@@ -1,0 +1,10 @@
+# Run locally before each commit:  pre-commit install
+# Mirrors the Ruff check enforced in CI (.github/workflows/ci.yml). Ruff config
+# lives in backend/pyproject.toml and is resolved per-file automatically.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
