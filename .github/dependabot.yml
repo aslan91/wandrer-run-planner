@@ -1,20 +1,9 @@
 version: 2
 updates:
-  - package-ecosystem: pip
-    directory: /backend
+  - package-ecosystem: "github-actions"
+    directory: "/"
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    groups:
-      python-deps:
-        patterns:
-          - "*"
-
-  - package-ecosystem: github-actions
-    directory: /
-    schedule:
-      interval: weekly
-    groups:
-      actions:
-        patterns:
-          - "*"
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "github-actions"
