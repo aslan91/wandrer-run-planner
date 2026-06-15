@@ -21,6 +21,6 @@ jobs:
 
       - name: Assign PR to repository owner
         if: ${{ steps.release.outputs.prs_created == 'true' }}
-        run: gh pr edit ${{ fromJSON(steps.release.outputs.pr).number }} --add-assignee ${{ github.repository_owner }}
+        run: gh pr edit ${{ fromJSON(steps.release.outputs.pr).number }} --add-assignee ${{ github.repository_owner }} --repo ${{ github.repository }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
