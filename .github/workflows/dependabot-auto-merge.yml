@@ -6,9 +6,14 @@ permissions:
   pull-requests: write
   contents: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || 
+    github.ref }}
+  cancel-in-progress: true
 jobs:
   dependabot:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: github.event.pull_request.user.login == 'dependabot[bot]'
     steps:
       - name: Dependabot metadata

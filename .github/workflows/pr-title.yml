@@ -8,10 +8,17 @@ on:
       - edited
       - synchronize
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || 
+    github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
 jobs:
   main:
     name: Validate PR Title
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       pull-requests: read
       statuses: write

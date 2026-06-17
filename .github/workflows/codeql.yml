@@ -8,10 +8,17 @@ on:
   schedule:
     - cron: "23 4 * * 1"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || 
+    github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
 jobs:
   analyze:
     name: Analyze (python)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       actions: read
       contents: read
@@ -25,4 +32,5 @@ jobs:
           languages: python
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@c35d1b164463ee62a100735382aaaa525c5d3496 # codeql-bundle-v2.25.6
+        uses: 
+          github/codeql-action/analyze@c35d1b164463ee62a100735382aaaa525c5d3496     # codeql-bundle-v2.25.6
