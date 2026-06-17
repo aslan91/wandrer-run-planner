@@ -36,5 +36,5 @@ jobs:
           enable-cache: false
       - name: Audit dependencies for known vulnerabilities
         run: |-
-          uv uv pip install --system --system pip-audit
+          uv pip install --system pip-audit
           pip-audit -r requirements.txt
