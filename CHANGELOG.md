@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.15.0](https://github.com/aslan91/wandrer-run-planner/compare/v0.14.0...v0.15.0) (2026-06-18)
+
+
+### Features
+
+* **userscript:** add eye toggle to hide/show planned route ([17b1e61](https://github.com/aslan91/wandrer-run-planner/commit/17b1e61f61dae46c23d2f0cfc36fa3eb56ec98dc))
+
+
+### Bug Fixes
+
+* exclude Wandrer-ignored paths (parking aisles, driveways) from coverage ([edca1f5](https://github.com/aslan91/wandrer-run-planner/commit/edca1f514a6f0835629a15b93a91f499c6a14a9d))
+
 ## [0.14.0](https://github.com/aslan91/wandrer-run-planner/compare/v0.13.0...v0.14.0) (2026-06-17)
 
 
