@@ -60,14 +60,15 @@ def _one_walk(
             if dist + elen + home_dist[nb] > target_m + tol_m:
                 continue
             eid = frozenset((cur, nb))
+            new_ground = not edge["travelled"] and not edge.get("excluded")
             weight = 1.0
-            if not edge["travelled"] and eid not in covered:
+            if new_ground and eid not in covered:
                 weight *= 6.0  # strongly prefer new ground
             if eid in used:
                 weight *= 0.12  # avoid repeats
             if len(nodes) >= 2 and nb == nodes[-2]:
                 weight *= 0.05  # avoid immediate backtracking
-            candidates.append((nb, elen, eid, edge["travelled"], weight))
+            candidates.append((nb, elen, eid, new_ground, weight))
 
         if not candidates:
             break
@@ -82,11 +83,11 @@ def _one_walk(
                 chosen = c
                 break
 
-        nb, elen, eid, travelled, _w = chosen
+        nb, elen, eid, new_ground, _w = chosen
         dist += elen
         if eid in used or eid in covered:
             repeat += elen
-        if not travelled and eid not in covered:
+        if new_ground and eid not in covered:
             new += elen
             covered.add(eid)
         used.add(eid)
@@ -106,7 +107,7 @@ def _one_walk(
             dist += elen
             if eid in used or eid in covered:
                 repeat += elen
-            if not edge["travelled"] and eid not in covered:
+            if not edge["travelled"] and not edge.get("excluded") and eid not in covered:
                 new += elen
                 covered.add(eid)
             used.add(eid)

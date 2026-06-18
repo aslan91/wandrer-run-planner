@@ -62,6 +62,23 @@ _RUNNABLE = {
     "road",
 }
 
+# `service` sub-tags that Wandrer excludes from scoring (they render colour-less
+# on the Big Map: neither green=travelled nor red=untravelled). Covering them
+# earns nothing, so we keep them only as connectors, not as reward-worthy ground.
+_EXCLUDED_SERVICE = {
+    "parking_aisle",
+    "driveway",
+    "drive-through",
+    "drive_through",
+    "parking",
+    "emergency_access",
+}
+
+
+def _is_excluded(tags: dict) -> bool:
+    """True if Wandrer ignores this way for scoring (parking aisles, driveways…)."""
+    return tags.get("service") in _EXCLUDED_SERVICE or tags.get("area") == "yes"
+
 
 def _cache_path(query: str) -> Path:
     key = hashlib.sha256(query.encode("utf-8")).hexdigest()[:16]
@@ -178,6 +195,7 @@ def build_graph(overpass_json: dict) -> nx.Graph:
         if tags.get("foot") == "no" or tags.get("access") in {"private", "no"}:
             continue
         way_id = way.get("id")
+        excluded = _is_excluded(tags)
         node_ids = way.get("nodes", [])
         for a, b in zip(node_ids[:-1], node_ids[1:], strict=True):
             if a not in coords or b not in coords:
@@ -192,14 +210,19 @@ def build_graph(overpass_json: dict) -> nx.Graph:
                 g.add_node(b, xy=cb)
             if g.has_edge(a, b):
                 # Keep the shorter edge if a duplicate way segment appears, and
-                # remember every way id sharing this segment.
+                # remember every way id sharing this segment. A segment counts as
+                # excluded only if every way sharing it is excluded.
                 if length < g[a][b]["length"]:
                     g[a][b]["length"] = length
                 if way_id is not None:
                     g[a][b]["osm_ids"].add(way_id)
+                g[a][b]["excluded"] = g[a][b]["excluded"] and excluded
             else:
                 osm_ids = {way_id} if way_id is not None else set()
-                g.add_edge(a, b, length=length, travelled=False, osm_ids=osm_ids)
+                g.add_edge(
+                    a, b, length=length, travelled=False, osm_ids=osm_ids,
+                    excluded=excluded,
+                )
     return g
 
 

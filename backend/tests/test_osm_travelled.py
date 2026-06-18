@@ -49,6 +49,22 @@ def test_build_graph_skips_private_access() -> None:
     assert g.number_of_edges() == 0
 
 
+def test_build_graph_marks_excluded_service() -> None:
+    # Parking aisles render colour-less on Wandrer (not scored): kept as a
+    # connector but flagged excluded so the optimizer won't reward covering it.
+    data = _overpass_way(1, [(1, 0.0, 0.0), (2, 0.0, 0.001)], highway="service")
+    data["elements"][0]["tags"]["service"] = "parking_aisle"
+    g = build_graph(data)
+    assert g.number_of_edges() == 1
+    assert g[1][2]["excluded"] is True
+
+
+def test_build_graph_normal_way_not_excluded() -> None:
+    data = _overpass_way(1, [(1, 0.0, 0.0), (2, 0.0, 0.001)])
+    g = build_graph(data)
+    assert g[1][2]["excluded"] is False
+
+
 def test_nearest_node_finds_closest() -> None:
     data = _overpass_way(1, [(1, 0.0, 0.0), (2, 0.0, 0.01), (3, 0.0, 0.02)])
     g = build_graph(data)
