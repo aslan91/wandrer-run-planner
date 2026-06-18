@@ -42,7 +42,10 @@ map to specific HTTP codes (`ValueError`→422 unsatisfiable, `RuntimeError`→5
 
 ### Userscript (`userscript/wandrer-run-planner.user.js`)
 
-Single self-contained file with a `// ==UserScript==` metadata block (bump `@version` on changes).
+Single self-contained file with a `// ==UserScript==` metadata block. The `@version` is kept in
+sync with the release-please version automatically (markers `x-release-please-start-version` /
+`x-release-please-end-version` around it, wired via `extra-files` in `release-please-config.json`),
+so don't bump it by hand.
 Key design points to preserve:
 - Reads travelled features off the **live Mapbox GL map** via `querySourceFeatures` — only tiles
   currently in view are readable.

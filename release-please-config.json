@@ -3,7 +3,10 @@
   "bootstrap-sha": "f090f75959d95e9c2e280ac41a89b6482ab6039a",
   "packages": {
     ".": {
-      "release-type": "simple"
+      "release-type": "simple",
+      "extra-files": [
+        "userscript/wandrer-run-planner.user.js"
+      ]
     }
   }
 }
