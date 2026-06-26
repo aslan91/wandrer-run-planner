@@ -29,12 +29,55 @@ class Route:
     score: float
 
 
+def _new_ground_spur_entries(g: nx.Graph) -> dict[int, set[int]]:
+    """Find dead-end spurs that contain untravelled ground.
+
+    A spur is a chain of degree-2 nodes ending in a dead end (degree-1 node).
+    The only way to cover an untravelled spur is an out-and-back from the
+    junction where it branches off, so we record that junction and the spur's
+    first node. The walker uses this to dive into the spur whenever it passes
+    the junction, instead of skipping it (which would force a wasteful repeat
+    trip later just to reach the dead end).
+
+    Returns ``{junction_node: {first_spur_node, ...}}``.
+    """
+    deg = dict(g.degree())
+    entries: dict[int, set[int]] = {}
+    for leaf in [n for n in g.nodes if deg[n] == 1]:
+        prev: int | None = None
+        cur = leaf
+        spur_edges: list[tuple[int, int]] = []
+        junction: int | None = None
+        # Walk inward through the degree-2 chain until we reach a junction.
+        while True:
+            nbrs = [x for x in g.neighbors(cur) if x != prev]
+            if not nbrs:
+                break
+            nxt = nbrs[0]
+            spur_edges.append((cur, nxt))
+            if deg[nxt] != 2:
+                junction = nxt
+                break
+            prev, cur = cur, nxt
+        if junction is None:
+            continue
+        has_new = any(
+            not g[a][b]["travelled"] and not g[a][b].get("excluded")
+            for a, b in spur_edges
+        )
+        if has_new:
+            first = spur_edges[-1][0]  # spur node adjacent to the junction
+            entries.setdefault(junction, set()).add(first)
+    return entries
+
+
 def _one_walk(
     g: nx.Graph,
     start: int,
     target_m: float,
     tol_m: float,
     home_dist: dict[int, float],
+    spur_entries: dict[int, set[int]],
     rng: random.Random,
     max_steps: int = 4000,
 ) -> Route | None:
@@ -64,6 +107,11 @@ def _one_walk(
             weight = 1.0
             if new_ground and eid not in covered:
                 weight *= 6.0  # strongly prefer new ground
+            if cur in spur_entries and nb in spur_entries[cur] and eid not in used:
+                # Diving into an untravelled dead-end spur while we're at its
+                # junction: cover it now (out-and-back) so we don't have to come
+                # all the way back here later just to reach the dead end.
+                weight *= 40.0
             if eid in used:
                 weight *= 0.12  # avoid repeats
             if len(nodes) >= 2 and nb == nodes[-2]:
@@ -131,11 +179,12 @@ def plan_route(
     """Run many randomized walks and return the best one."""
     rng = random.Random(seed)
     home_dist = nx.single_source_dijkstra_path_length(g, start, weight="length")
+    spur_entries = _new_ground_spur_entries(g)
 
     best: Route | None = None
     log_every = max(1, attempts // 10)
     for i in range(attempts):
-        route = _one_walk(g, start, target_m, tol_m, home_dist, rng)
+        route = _one_walk(g, start, target_m, tol_m, home_dist, spur_entries, rng)
         if route is None:
             continue
         if best is None or route.score > best.score:

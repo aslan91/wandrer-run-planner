@@ -55,3 +55,24 @@ def test_plan_route_prefers_untravelled() -> None:
     route = plan_route(g, 0, 1000.0, 300.0, attempts=300, seed=3)
     assert route is not None
     assert route.new_m > 0
+
+
+def test_plan_route_covers_dead_end_spur() -> None:
+    # A grid that is already fully travelled, plus a single untravelled spur
+    # hanging off an interior junction and ending in a dead end. The only way to
+    # cover it is an out-and-back, which the optimizer should still do.
+    g = _grid_graph()
+    for _, _, d in g.edges(data=True):
+        d["travelled"] = True
+    junction = 14  # interior node (row 2, col 2)
+    spur_tip = 100  # fresh node id outside the grid
+    deg = 100.0 / 111_320.0
+    g.add_node(spur_tip, xy=(2 * deg, 3.5 * deg))
+    g.add_edge(junction, spur_tip, length=120.0, travelled=False, osm_ids=set())
+
+    route = plan_route(g, 0, 1000.0, 300.0, attempts=300, seed=5)
+    assert route is not None
+    # The dead-end spur tip must appear on the route, and it must be reached and
+    # left via the same junction (out-and-back).
+    assert spur_tip in route.nodes
+    assert route.new_m > 0
