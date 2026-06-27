@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/aslan91/wandrer-run-planner/compare/v0.15.0...v0.16.0) (2026-06-26)
+
+
+### Features
+
+* **optimize:** cover untravelled dead-end spurs via out-and-back ([bd53020](https://github.com/aslan91/wandrer-run-planner/commit/bd530202b9a8b133d1ba0a5b4027c153a6a7659f))
+
 ## [0.15.0](https://github.com/aslan91/wandrer-run-planner/compare/v0.14.0...v0.15.0) (2026-06-18)
 
 
