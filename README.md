@@ -111,6 +111,19 @@ which still produces a valid (just not Wandrer-aware) route.
 > so keep the planning area within the visible map (zoom to roughly the run
 > area before planning).
 
+### Leaderboard Analyst (Wandrer.earth only)
+
+The sidebar panel includes a **Leaderboard** tab to help you track your monthly standings and target close competitor gaps:
+
+1. Switch to the **Leaderboard** tab in the panel header.
+2. Click **Analyze Regions**.
+3. The script retrieves your touched regions and scrapes monthly standings, automatically calculating:
+   - Your current rank in each region.
+   - Your monthly progress (km).
+   - The exact kilometer gap to Rank 3 and Rank 1 (with rival names).
+4. Regions are automatically sorted by **smallest gap first**, highlighting low-hanging fruit where you can easily overtake a rival.
+5. Results are cached locally (6-hour TTL) for instant loading. Click **Analyze Regions** again to force a refresh.
+
 ### Using a planned route
 
 After **Plan route**, use the result via:
@@ -141,6 +154,7 @@ After **Plan route**, use the result via:
 - [x] Live travelled read via `querySourceFeatures` (per-site adapter)
 - [x] **Native wandrer.earth Big Map support** (primary source; exact OSM ids)
 - [x] **Primary export: one-click GPX** (watch / mapping app / Strava route upload)
+- [x] **Leaderboard Analyst** (monthly standings scrape, catch-up gap calculation, cached)
 - [x] Experimental "Create in Strava" via manual-mode point replay (Strava only)
 
 ## License

@@ -414,29 +414,44 @@
     <details style="margin:4px 0">
       <summary style="cursor:pointer;font-size:12px;color:#666">Advanced: draw in Strava</summary>
       <button id="wrp-create" style="width:100%;margin:6px 0;padding:6px;background:#fff;color:#222;border:1px solid #ccc;border-radius:6px;cursor:pointer" disabled>Create in Strava (experimental)</button>
+      <button id="wrp-create-untravelled" style="width:100%;margin:6px 0;padding:6px;background:#fff;color:#222;border:1px solid #ccc;border-radius:6px;cursor:pointer">Auto-Route Untravelled (Popularity)</button>
       <div style="font-size:11px;color:#999">Replays points into Strava's manual mode. Fragile against Strava UI changes — prefer GPX.</div>
     </details>`
     : "";
 
   panel.innerHTML = `
     <div id="wrp-drag" style="display:flex;align-items:center;gap:8px;font-weight:600;margin:-12px -14px 8px;padding:10px 14px 8px;cursor:move;user-select:none;border-bottom:1px solid #eee;border-radius:10px 10px 0 0"><span style="flex:1;min-width:0">Wandrer Run Planner <span style="font-weight:400;font-size:11px;color:#888">· ${SITE.siteName}</span></span><button id="wrp-eye" title="Hide route" aria-label="Hide route" style="display:none;flex:none;width:22px;height:22px;line-height:1;padding:0;border:1px solid #ccc;border-radius:6px;background:#fff;color:#444;cursor:pointer;font-size:13px">👁</button><button id="wrp-min" title="Minimize" aria-label="Minimize" style="flex:none;width:22px;height:22px;line-height:1;padding:0;border:1px solid #ccc;border-radius:6px;background:#fff;color:#444;cursor:pointer;font-size:14px">–</button></div>
+    
+    <div id="wrp-tabs" style="display:flex;margin:0 -14px 10px;border-bottom:1px solid #eee">
+      <button id="wrp-tab-btn-plan" class="wrp-tab-btn active">Planner</button>
+      <button id="wrp-tab-btn-leader" class="wrp-tab-btn">Leaderboard</button>
+    </div>
+
     <div id="wrp-body">
-    <label style="display:block;margin:6px 0">Target km
-      <input id="wrp-km" type="number" value="6" step="0.5" min="1"
-             style="width:100%;box-sizing:border-box"></label>
-    <label style="display:block;margin:6px 0">Tolerance km
-      <input id="wrp-tol" type="number" value="1" step="0.5" min="0"
-             style="width:100%;box-sizing:border-box"></label>
-    <button id="wrp-pick" style="width:100%;margin:6px 0;padding:6px;background:#fff;color:#222;border:1px solid #ccc;border-radius:6px;cursor:pointer">Pick start on map</button>
-    <input id="wrp-coords" type="text" placeholder="or paste: lat, lng"
-           style="width:100%;box-sizing:border-box;margin:2px 0;padding:5px">
-    <div id="wrp-start" style="color:#888;font-size:12px;margin:2px 0">start: (none)</div>
-    <button id="wrp-detect" style="width:100%;margin:6px 0;padding:6px;background:#fff;color:#222;border:1px solid #ccc;border-radius:6px;cursor:pointer">${SITE.id === "wandrer" ? "Detect travelled" : "Detect overlay"}</button>
-    <button id="wrp-plan" style="width:100%;margin:6px 0;padding:6px;background:#fc4c02;color:#fff;border:none;border-radius:6px">Plan route</button>
-    <button id="wrp-gpx" style="width:100%;margin:6px 0;padding:6px;background:#fc4c02;color:#fff;border:none;border-radius:6px" disabled>Download GPX</button>
-    <div style="font-size:11px;color:#888;margin:2px 0 4px">Recommended: load the GPX on your watch, or import it (Strava subscribers: Routes → Upload a Route; Garmin/Komoot also work).</div>
-    ${createSectionHtml}
-    <div id="wrp-status" style="margin-top:6px;font-size:12px;color:#444"></div>
+      <div id="wrp-view-plan">
+        <label style="display:block;margin:6px 0">Target km
+          <input id="wrp-km" type="number" value="6" step="0.5" min="1"
+                 style="width:100%;box-sizing:border-box"></label>
+        <label style="display:block;margin:6px 0">Tolerance km
+          <input id="wrp-tol" type="number" value="1" step="0.5" min="0"
+                 style="width:100%;box-sizing:border-box"></label>
+        <button id="wrp-pick" style="width:100%;margin:6px 0;padding:6px;background:#fff;color:#222;border:1px solid #ccc;border-radius:6px;cursor:pointer">Pick start on map</button>
+        <input id="wrp-coords" type="text" placeholder="or paste: lat, lng"
+               style="width:100%;box-sizing:border-box;margin:2px 0;padding:5px">
+        <div id="wrp-start" style="color:#888;font-size:12px;margin:2px 0">start: (none)</div>
+        <button id="wrp-detect" style="width:100%;margin:6px 0;padding:6px;background:#fff;color:#222;border:1px solid #ccc;border-radius:6px;cursor:pointer">${SITE.id === "wandrer" ? "Detect travelled" : "Detect overlay"}</button>
+        <button id="wrp-plan" style="width:100%;margin:6px 0;padding:6px;background:#fc4c02;color:#fff;border:none;border-radius:6px">Plan route</button>
+        <button id="wrp-gpx" style="width:100%;margin:6px 0;padding:6px;background:#fc4c02;color:#fff;border:none;border-radius:6px" disabled>Download GPX</button>
+        <div style="font-size:11px;color:#888;margin:2px 0 4px">Recommended: load the GPX on your watch, or import it (Strava subscribers: Routes → Upload a Route; Garmin/Komoot also work).</div>
+        ${createSectionHtml}
+        <div id="wrp-status" style="margin-top:6px;font-size:12px;color:#444"></div>
+      </div>
+
+      <div id="wrp-view-leader" style="display:none">
+        <button id="wla-sync" style="width:100%;margin:6px 0;padding:6px;background:#fc4c02;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600">Analyze Regions</button>
+        <div id="wla-status" style="font-size:11px;color:#666;margin:4px 0"></div>
+        <div id="wla-results" style="display:flex;flex-direction:column;gap:8px;margin-top:8px"></div>
+      </div>
     </div>
   `;
   // Defensive styles: some host pages (e.g. wandrer.earth) ship aggressive
@@ -447,9 +462,52 @@
     "#wrp-panel{height:auto!important;min-height:0!important;" +
     "max-height:calc(100vh - 24px)!important;bottom:auto!important;" +
     "overflow-y:auto!important;box-sizing:border-box!important;width:240px!important}" +
-    "#wrp-panel *{box-sizing:border-box}";
+    "#wrp-panel *{box-sizing:border-box}" +
+    ".wrp-tab-btn{flex:1;padding:8px;border:none;background:#f5f5f5;border-bottom:2px solid transparent;color:#666;cursor:pointer;font-size:11px;font-weight:600;transition:all 0.2s}" +
+    ".wrp-tab-btn.active{background:#fff;border-bottom:2px solid #fc4c02;color:#222}" +
+    ".wla-card{border:1px solid #eee;border-radius:8px;padding:10px;margin-bottom:8px;background:#fff;box-sizing:border-box;box-shadow:0 1px 3px rgba(0,0,0,0.05)}" +
+    ".wla-badge{font-size:10px;padding:2px 6px;border-radius:10px;font-weight:600}";
   (document.head || document.documentElement).appendChild(wrpStyle);
   document.body.appendChild(panel);
+
+  // Tab switching logic
+  const btnPlan = panel.querySelector("#wrp-tab-btn-plan");
+  const btnLeader = panel.querySelector("#wrp-tab-btn-leader");
+  const viewPlan = panel.querySelector("#wrp-view-plan");
+  const viewLeader = panel.querySelector("#wrp-view-leader");
+
+  btnPlan.addEventListener("click", () => {
+    btnPlan.classList.add("active");
+    btnLeader.classList.remove("active");
+    viewPlan.style.display = "";
+    viewLeader.style.display = "none";
+  });
+
+  btnLeader.addEventListener("click", () => {
+    btnLeader.classList.add("active");
+    btnPlan.classList.remove("active");
+    viewPlan.style.display = "none";
+    viewLeader.style.display = "";
+    try {
+      const cached = localStorage.getItem("wla_standings_cache");
+      if (cached) {
+        const { timestamp, data } = JSON.parse(cached);
+        if (Date.now() - timestamp < 6 * 60 * 60 * 1000) {
+          renderStandings(data);
+          const ageMin = Math.round((Date.now() - timestamp) / 60000);
+          panel.querySelector("#wla-status").textContent = `Loaded from cache (${ageMin}m ago).`;
+        }
+      }
+    } catch (_e) {}
+  });
+
+  if (SITE.id !== "wandrer") {
+    panel.querySelector("#wrp-view-leader").innerHTML = `
+      <div style="text-align:center;color:#888;font-size:11px;padding:20px 0">
+        Leaderboard Analyst is only available when viewing the Big Map on wandrer.earth.
+      </div>
+    `;
+  }
 
   // Minimize / restore: collapse the panel to just its title bar so it stays out
   // of the way when not in use. State is persisted across reloads. The button
@@ -704,6 +762,8 @@
   $("#wrp-detect").addEventListener("click", onDetect);
   const createBtn = $("#wrp-create");
   if (createBtn) createBtn.addEventListener("click", guard(onCreate));
+  const createUntravelledBtn = $("#wrp-create-untravelled");
+  if (createUntravelledBtn) createUntravelledBtn.addEventListener("click", guard(onCreateUntravelled));
   $("#wrp-gpx").addEventListener("click", onDownloadGpx);
 
   // ----------------------------------------------------------------------
@@ -736,10 +796,12 @@
   function probeSource(map, s) {
     const layerArgs = s.sourceLayers.length ? s.sourceLayers : [undefined];
     const srcTravelled = nameImpliesTravelled(s.id);
+    const srcUntravelled = WANDRER.UNTRAVELLED_NAME.test(s.id);
     let total = 0;
     let travelledCount = 0;
     const keys = new Set();
     const polylines = [];
+    const untravelledPolylines = [];
     const osmIds = new Set();
     const seen = new Set();
 
@@ -751,24 +813,29 @@
         continue;
       }
       const slTravelled = srcTravelled || nameImpliesTravelled(sl);
+      const slUntravelled = srcUntravelled || WANDRER.UNTRAVELLED_NAME.test(sl || "");
       for (const f of feats) {
         total++;
         Object.keys(f.properties || {}).forEach((k) => keys.add(k));
         const isTrav = slTravelled || isTravelled(f.properties);
-        if (!isTrav) continue;
+        const isUntrav = slUntravelled && !isTrav; 
+        if (!isTrav && !isUntrav) continue;
         const fid = f.id != null ? `${sl}:${f.id}` : null;
         if (fid && seen.has(fid)) continue;
         if (fid) seen.add(fid);
-        travelledCount++;
+        if (isTrav) travelledCount++;
         // Exact match key: Wandrer tags each segment with its OSM way id.
         const props = f.properties || {};
         const oid = props.osm_id_str ?? props.way_id ?? props.osm_id;
-        if (oid != null) {
+        if (oid != null && isTrav) {
           const n = parseInt(oid, 10);
           if (!Number.isNaN(n)) osmIds.add(n);
         }
         for (const pl of geometryToPolylines(f.geometry)) {
-          if (pl.length >= 2) polylines.push(pl);
+          if (pl.length >= 2) {
+            if (isTrav) polylines.push(pl);
+            if (isUntrav) untravelledPolylines.push(pl);
+          }
         }
       }
     }
@@ -779,6 +846,7 @@
       travelled: travelledCount,
       keys: [...keys],
       polylines,
+      untravelledPolylines,
       osmIds: [...osmIds],
       impliesTravelled: srcTravelled,
     };
@@ -1473,6 +1541,79 @@
     }
   }
 
+  async function ensurePopularityMode() {
+    const manual = findManualToggle();
+    if (manual && isManualOn(manual)) {
+      manual.input.click();
+      await sleep(200);
+    }
+    const labels = [...document.querySelectorAll("*")].filter(el => el.children.length === 0 && /popularity/i.test(el.textContent || ""));
+    for (const lbl of labels) {
+      let row = lbl;
+      for (let i = 0; i < 4 && row; i++, row = row.parentElement) {
+        const input = row.querySelector('input[type="checkbox"], [role="switch"]');
+        if (input && !isManualOn({input})) {
+          input.click();
+          await sleep(200);
+          return;
+        }
+      }
+    }
+  }
+
+  async function onCreateUntravelled() {
+    try {
+      setStatus("Looking for the map to extract untravelled paths…");
+      const map = findInteractiveMap() || findMap();
+      if (!map) return setStatus("Map not found.");
+      const canvas = map.getCanvas && map.getCanvas();
+      if (!canvas) return setStatus("Map canvas not available.");
+      
+      let sources = getWandrerSources(map);
+      let untravelled = [];
+      sources.forEach(s => {
+         const probe = probeSource(map, s);
+         untravelled.push(...probe.untravelledPolylines);
+      });
+      
+      if (!untravelled.length) return setStatus("No untravelled paths found in view.");
+      
+      untravelled.sort((a,b) => b.length - a.length);
+      
+      let anchors = [];
+      const start = startLatLng || (() => { const c = map.getCenter(); return { lat: c.lat, lng: c.lng }; })();
+      anchors.push([start.lat, start.lng]);
+
+      for (const pl of untravelled) {
+        if (anchors.length >= 25) break;
+        anchors.push(pl[0]);
+        anchors.push(pl[pl.length - 1]);
+      }
+      
+      await ensurePopularityMode();
+      
+      setStatus(`Creating untravelled route… 0/${anchors.length} points`);
+      let placed = 0, skipped = 0;
+      const restoreGestures = freezeMapGestures(map);
+      try {
+        for (let i = 0; i < anchors.length; i++) {
+          const [la, ln] = anchors[i];
+          const r = await placePointCentered(map, canvas, ln, la, i % 2 === 0);
+          if (r.ok) placed++; else skipped++;
+          setStatus(`Creating untravelled route… ${i + 1}/${anchors.length} points`);
+          await sleep(500); 
+        }
+      } finally {
+        restoreGestures();
+      }
+      await dismissStravaPopover();
+      setStatus(`Placed ${placed}/${anchors.length} anchor points using Popularity.`);
+    } catch (err) {
+      console.error("[WRP] create untravelled failed:", err);
+      setStatus("Create untravelled failed: " + err.message);
+    }
+  }
+
   function onDownloadGpx() {
     const res = window.__wrpLast;
     if (!res || !res.gpx) return setStatus("Plan a route first.");
@@ -1490,5 +1631,248 @@
       `Saved ${a.download}. Load it on your watch (Garmin/COROS…) or import into ` +
       "your mapping app. In Strava: Dashboard → Routes → Upload a Route (subscriber)."
     );
+  }
+
+  // --- Leaderboard Analyst Functions ---
+
+  async function fetchTouchedRegions() {
+    const statusEl = panel.querySelector("#wla-status");
+    statusEl.textContent = "Fetching dashboard...";
+    
+    let doc = document;
+    if (!doc.querySelector('a[href^="/a/"]')) {
+      const resp = await fetch("/dashboard");
+      if (!resp.ok) throw new Error(`Could not load dashboard: ${resp.status}`);
+      const html = await resp.text();
+      const parser = new DOMParser();
+      const dashDoc = parser.parseFromString(html, "text/html");
+      
+      const iframe = dashDoc.querySelector('iframe[src*="my_places_iframe"]');
+      let iframeUrl = "";
+      if (iframe) {
+        iframeUrl = iframe.getAttribute("src");
+      } else {
+        const profileLink = dashDoc.querySelector('a[href*="/athletes/"]');
+        if (profileLink) {
+          const match = profileLink.getAttribute("href").match(/\/athletes\/(\d+)/);
+          if (match) {
+            iframeUrl = `/dashboard/my_places_iframe/${match[1]}`;
+          }
+        }
+      }
+      
+      if (!iframeUrl) {
+        throw new Error("Could not find places iframe. Ensure you are logged in.");
+      }
+      
+      statusEl.textContent = "Fetching regions list...";
+      const iframeResp = await fetch(iframeUrl);
+      if (!iframeResp.ok) throw new Error(`Could not load places list: ${iframeResp.status}`);
+      const iframeHtml = await iframeResp.text();
+      doc = parser.parseFromString(iframeHtml, "text/html");
+    }
+    
+    const links = doc.querySelectorAll('a[href^="/a/"]');
+    const regions = [];
+    const seen = new Set();
+    links.forEach(link => {
+      const href = link.getAttribute("href");
+      const name = link.textContent.trim();
+      if (href && name) {
+        const slug = href.replace("/a/", "");
+        if (!seen.has(slug)) {
+          seen.add(slug);
+          regions.push({ name, slug, url: href });
+        }
+      }
+    });
+    
+    return regions;
+  }
+
+  async function fetchRegionLeaderboard(region) {
+    const resp = await fetch(`${region.url}?key=month`);
+    if (!resp.ok) return null;
+    const html = await resp.text();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
+    
+    const table = doc.querySelector("table");
+    if (!table) return null;
+    
+    const rows = table.querySelectorAll("tr");
+    const leaderboard = [];
+    rows.forEach((row, idx) => {
+      if (idx === 0) return;
+      const cells = row.querySelectorAll("td");
+      if (cells.length < 5) return;
+      
+      const rank = parseInt(cells[0].textContent.trim(), 10);
+      const athlete = cells[1].textContent.trim();
+      const points = cells[2].textContent.trim();
+      const totalProgress = cells[3].textContent.trim();
+      const monthProgressText = cells[4].textContent.trim();
+      const yearProgressText = cells[5] ? cells[5].textContent.trim() : "";
+      
+      const kmMatch = monthProgressText.match(/([\d.,]+)\s*km/);
+      const monthKm = kmMatch ? parseFloat(kmMatch[1].replace(/,/g, "")) : 0.0;
+      
+      const isUser = athlete.startsWith("•") || row.classList.contains("highlight") || row.getAttribute("style") !== null || row.className.includes("active") || row.className.includes("info");
+      
+      leaderboard.push({
+        rank, athlete, points, totalProgress, monthProgressText, monthKm, yearProgressText, isUser
+      });
+    });
+    return leaderboard;
+  }
+
+  function analyzeLeaderboard(region, leaderboard) {
+    if (!leaderboard || leaderboard.length === 0) return null;
+    
+    let userRow = leaderboard.find(r => r.isUser);
+    if (!userRow) {
+      userRow = leaderboard.find(r => r.athlete.includes("•"));
+    }
+    if (!userRow) {
+      userRow = leaderboard[leaderboard.length - 1];
+    }
+    
+    const userKm = userRow ? userRow.monthKm : 0.0;
+    const userRank = userRow ? userRow.rank : 999;
+    const userName = userRow ? userRow.athlete.replace(/^[•👑\s]+|[👑\s]+$/g, "").trim() : "You";
+    
+    const rank1 = leaderboard.find(r => r.rank === 1);
+    const rank2 = leaderboard.find(r => r.rank === 2);
+    const rank3 = leaderboard.find(r => r.rank === 3);
+    
+    const gapToRank1 = rank1 ? Math.max(0, rank1.monthKm - userKm) : 0;
+    const gapToRank2 = rank2 ? Math.max(0, rank2.monthKm - userKm) : 0;
+    const gapToRank3 = rank3 ? Math.max(0, rank3.monthKm - userKm) : 0;
+    
+    return {
+      regionName: region.name,
+      regionUrl: region.url,
+      userName,
+      userRank,
+      userKm,
+      rank1: rank1 ? { athlete: rank1.athlete.replace(/^[•👑\s]+|[👑\s]+$/g, "").trim(), km: rank1.monthKm } : null,
+      rank2: rank2 ? { athlete: rank2.athlete.replace(/^[•👑\s]+|[👑\s]+$/g, "").trim(), km: rank2.monthKm } : null,
+      rank3: rank3 ? { athlete: rank3.athlete.replace(/^[•👑\s]+|[👑\s]+$/g, "").trim(), km: rank3.monthKm } : null,
+      gapToRank1,
+      gapToRank2,
+      gapToRank3
+    };
+  }
+
+  function renderStandings(results) {
+    const listEl = panel.querySelector("#wla-results");
+    if (!listEl) return;
+    listEl.innerHTML = "";
+    
+    if (results.length === 0) {
+      listEl.innerHTML = '<div style="text-align:center;color:#888;font-size:12px;padding:20px 0">No touched regions found.</div>';
+      return;
+    }
+    
+    results.forEach(res => {
+      if (!res) return;
+      const card = document.createElement("div");
+      card.className = "wla-card";
+      
+      let badgeBg = "#aaa";
+      if (res.userRank === 1) badgeBg = "#ffd700;color:#222";
+      else if (res.userRank === 2) badgeBg = "#c0c0c0;color:#222";
+      else if (res.userRank === 3) badgeBg = "#cd7f32;color:#fff";
+      else badgeBg = "#007aff;color:#fff";
+      
+      const badgeStyle = `background:${badgeBg}`;
+      
+      let gapHtml = "";
+      if (res.userRank === 1) {
+        gapHtml = `<div style="color:#2b908f;font-weight:600;margin-top:4px">👑 Leading the board!</div>`;
+      } else {
+        if (res.userRank > 3 && res.rank3) {
+          gapHtml += `<div style="margin-top:2px">Gap to Rank 3: <span style="color:#e06666;font-weight:600">+${res.gapToRank3.toFixed(2)} km</span> <span style="color:#888">(${res.rank3.athlete})</span></div>`;
+        }
+        if (res.rank1) {
+          gapHtml += `<div style="margin-top:2px">Gap to Rank 1: <span style="color:#e06666;font-weight:600">+${res.gapToRank1.toFixed(2)} km</span> <span style="color:#888">(${res.rank1.athlete})</span></div>`;
+        }
+      }
+      
+      card.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <strong style="font-size:12px;color:#222;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px" title="${res.regionName}">${res.regionName}</strong>
+          <span class="wla-badge" style="${badgeStyle}">Rank #${res.userRank}</span>
+        </div>
+        <div style="font-size:11px;color:#555;line-height:1.4">
+          <div>My Progress: <strong>${res.userKm.toFixed(2)} km</strong></div>
+          ${gapHtml}
+        </div>
+        <div style="margin-top:6px;display:flex;justify-content:flex-end">
+          <a href="${res.regionUrl}" target="_blank" style="font-size:10px;color:#fc4c02;text-decoration:none;font-weight:600">View Map ➔</a>
+        </div>
+      `;
+      listEl.appendChild(card);
+    });
+  }
+
+  async function onSyncLeaderboard() {
+    const statusEl = panel.querySelector("#wla-status");
+    const listEl = panel.querySelector("#wla-results");
+    listEl.innerHTML = "";
+    
+    try {
+      const regions = await fetchTouchedRegions();
+      if (regions.length === 0) {
+        statusEl.textContent = "No regions found.";
+        return;
+      }
+      
+      statusEl.textContent = `Found ${regions.length} regions. Querying standings...`;
+      const results = [];
+      
+      const limit = Math.min(regions.length, 12);
+      for (let i = 0; i < limit; i++) {
+        const r = regions[i];
+        statusEl.textContent = `Querying (${i+1}/${limit}): ${r.name}...`;
+        try {
+          const board = await fetchRegionLeaderboard(r);
+          if (board) {
+            const analysis = analyzeLeaderboard(r, board);
+            if (analysis) results.push(analysis);
+          }
+          await sleep(400);
+        } catch (err) {
+          console.error(`Failed to fetch leaderboard for ${r.name}:`, err);
+        }
+      }
+      
+      results.sort((a, b) => {
+        if (a.userRank === 1 && b.userRank !== 1) return -1;
+        if (b.userRank === 1 && a.userRank !== 1) return 1;
+        const aGap = a.gapToRank3 || a.gapToRank1;
+        const bGap = b.gapToRank3 || b.gapToRank1;
+        return aGap - bGap;
+      });
+      
+      renderStandings(results);
+      statusEl.textContent = `Updated ${results.length} regions.`;
+      
+      try {
+        localStorage.setItem("wla_standings_cache", JSON.stringify({
+          timestamp: Date.now(),
+          data: results
+        }));
+      } catch (_e) {}
+      
+    } catch (err) {
+      console.error("Leaderboard analysis failed:", err);
+      statusEl.textContent = "Analysis failed: " + err.message;
+    }
+  }
+
+  const syncBtn = panel.querySelector("#wla-sync");
+  if (syncBtn) {
+    syncBtn.addEventListener("click", guard(onSyncLeaderboard));
   }
 })();
