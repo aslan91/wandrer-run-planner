@@ -9,6 +9,9 @@
 // @match        https://www.strava.com/maps*
 // @match        https://www.strava.com/athlete/maps*
 // @match        https://wandrer.earth/dashboard/my_places_iframe/*
+// @match        https://wandrer.earth/dashboard*
+// @match        https://wandrer.earth/map*
+// @match        https://wandrer.earth/a/*
 // @homepageURL  https://github.com/aslan91/wandrer-run-planner
 // @supportURL   https://github.com/aslan91/wandrer-run-planner/issues
 // @updateURL    https://raw.githubusercontent.com/aslan91/wandrer-run-planner/main/userscript/wandrer-run-planner.user.js
