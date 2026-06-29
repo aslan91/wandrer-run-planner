@@ -1714,10 +1714,10 @@
       const monthProgressText = cells[4].textContent.trim();
       const yearProgressText = cells[5] ? cells[5].textContent.trim() : "";
       
-      const kmMatch = monthProgressText.match(/([\d.,]+)\s*km/);
+      const kmMatch = monthProgressText.match(/([\d.,]+)\s*(?:km|mi|miles?)/i);
       const monthKm = kmMatch ? parseFloat(kmMatch[1].replace(/,/g, "")) : 0.0;
       
-      const isUser = athlete.startsWith("•") || row.classList.contains("highlight") || row.getAttribute("style") !== null || row.className.includes("active") || row.className.includes("info");
+      const isUser = athlete.startsWith("•") || row.classList.contains("highlight") || row.className.includes("active") || row.className.includes("info");
       
       leaderboard.push({
         rank, athlete, points, totalProgress, monthProgressText, monthKm, yearProgressText, isUser
@@ -1841,7 +1841,7 @@
             const analysis = analyzeLeaderboard(r, board);
             if (analysis) results.push(analysis);
           }
-          await sleep(400);
+          await sleep(500);
         } catch (err) {
           console.error(`Failed to fetch leaderboard for ${r.name}:`, err);
         }
