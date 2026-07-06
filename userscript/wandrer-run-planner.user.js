@@ -108,6 +108,12 @@
   }
   const SITE = detectSite();
 
+  // If we are on wandrer.earth and the page has the map iframe, this script runs
+  // inside the iframe already. Exit early in the parent page to avoid duplicate UI.
+  if (SITE.id === "wandrer" && document.querySelector('iframe[src*="my_places_iframe"]')) {
+    return;
+  }
+
   // Active overlay-detection config for the Strava read path. Unused on wandrer
   // (which reads explicit native sources) but kept defined so the shared
   // overlay helpers below always have a config to reference.
