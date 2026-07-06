@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.1](https://github.com/aslan91/wandrer-run-planner/compare/v0.17.0...v0.17.1) (2026-07-06)
+
+
+### Bug Fixes
+
+* **userscript:** fix leaderboard parsing and region list ([38f68ab](https://github.com/aslan91/wandrer-run-planner/commit/38f68abdcf2e4cb1b6fe4330215c9d036f585547))
+
 ## [0.17.0](https://github.com/aslan91/wandrer-run-planner/compare/v0.16.0...v0.17.0) (2026-07-06)
 
 
