@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.17.0](https://github.com/aslan91/wandrer-run-planner/compare/v0.16.0...v0.17.0) (2026-07-06)
+
+
+### Features
+
+* **userscript:** add monthly leaderboard analyst tab ([a698ced](https://github.com/aslan91/wandrer-run-planner/commit/a698ced37e75fa1040eb23b65385591cc2ceafe8))
+* **userscript:** match dashboard, map, and region leaderboards ([ae24a0a](https://github.com/aslan91/wandrer-run-planner/commit/ae24a0a6e434e7390552b10d100d95e7023e618b))
+
+
+### Bug Fixes
+
+* **userscript:** prevent duplicate UI on wandrer.earth dashboard ([e24cba3](https://github.com/aslan91/wandrer-run-planner/commit/e24cba3fee8376afed448979447c666f42e30e8c))
+* **userscript:** resolve unit parsing, user detection, and rate-limiting issues ([4978f6f](https://github.com/aslan91/wandrer-run-planner/commit/4978f6f77f971404bb242adc09d9722daca05176))
+
 ## [0.16.0](https://github.com/aslan91/wandrer-run-planner/compare/v0.15.0...v0.16.0) (2026-06-26)
 
 
