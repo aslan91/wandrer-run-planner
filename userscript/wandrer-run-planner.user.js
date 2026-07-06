@@ -1649,7 +1649,8 @@
     statusEl.textContent = "Fetching dashboard...";
     
     let doc = document;
-    if (!doc.querySelector('a[href^="/a/"]')) {
+    const isIframe = window.location.pathname.startsWith("/dashboard/my_places_iframe");
+    if (!isIframe) {
       const resp = await fetch("/dashboard");
       if (!resp.ok) throw new Error(`Could not load dashboard: ${resp.status}`);
       const html = await resp.text();
@@ -1685,11 +1686,12 @@
     const regions = [];
     const seen = new Set();
     links.forEach(link => {
-      const href = link.getAttribute("href");
+      let href = link.getAttribute("href");
       const name = link.textContent.trim();
       if (href && name) {
-        const slug = href.replace("/a/", "");
-        if (!seen.has(slug)) {
+        href = href.split("?")[0].split("#")[0];
+        const slug = href.replace(/^\/a\//, "");
+        if (slug && slug !== "leaderboard" && !seen.has(slug)) {
           seen.add(slug);
           regions.push({ name, slug, url: href });
         }
@@ -1698,7 +1700,7 @@
     
     return regions;
   }
-
+ 
   async function fetchRegionLeaderboard(region) {
     const resp = await fetch(`${region.url}?key=month`);
     if (!resp.ok) return null;
@@ -1716,17 +1718,30 @@
       const cells = row.querySelectorAll("td");
       if (cells.length < 5) return;
       
-      const rank = parseInt(cells[0].textContent.trim(), 10);
-      const athlete = cells[1].textContent.trim();
-      const points = cells[2].textContent.trim();
-      const totalProgress = cells[3].textContent.trim();
-      const monthProgressText = cells[4].textContent.trim();
-      const yearProgressText = cells[5] ? cells[5].textContent.trim() : "";
+      const rankEl = row.querySelector(".ranking") || cells[0];
+      const athleteEl = row.querySelector(".name") || cells[1];
+      const pointsEl = row.querySelector(".points") || cells[2];
+      const totalProgressEl = row.querySelector(".p_total") || cells[3];
+      const monthProgressEl = row.querySelector(".p_month");
+      const yearProgressEl = row.querySelector(".p_year");
+      
+      if (!monthProgressEl) return;
+      
+      const rank = parseInt(rankEl.textContent.trim(), 10);
+      const athlete = athleteEl.textContent.trim();
+      const points = pointsEl ? pointsEl.textContent.trim() : "";
+      const totalProgress = totalProgressEl ? totalProgressEl.textContent.trim() : "";
+      const monthProgressText = monthProgressEl.textContent.trim();
+      const yearProgressText = yearProgressEl ? yearProgressEl.textContent.trim() : "";
       
       const kmMatch = monthProgressText.match(/([\d.,]+)\s*(?:km|mi|miles?)/i);
       const monthKm = kmMatch ? parseFloat(kmMatch[1].replace(/,/g, "")) : 0.0;
       
-      const isUser = athlete.startsWith("•") || row.classList.contains("highlight") || row.className.includes("active") || row.className.includes("info");
+      const isUser = row.classList.contains("leaderboard-athlete-own-ranking") ||
+                     athlete.startsWith("•") ||
+                     row.classList.contains("highlight") ||
+                     row.className.includes("active") ||
+                     row.className.includes("info");
       
       leaderboard.push({
         rank, athlete, points, totalProgress, monthProgressText, monthKm, yearProgressText, isUser
@@ -1734,16 +1749,13 @@
     });
     return leaderboard;
   }
-
+ 
   function analyzeLeaderboard(region, leaderboard) {
     if (!leaderboard || leaderboard.length === 0) return null;
     
     let userRow = leaderboard.find(r => r.isUser);
     if (!userRow) {
       userRow = leaderboard.find(r => r.athlete.includes("•"));
-    }
-    if (!userRow) {
-      userRow = leaderboard[leaderboard.length - 1];
     }
     
     const userKm = userRow ? userRow.monthKm : 0.0;
@@ -1772,7 +1784,7 @@
       gapToRank3
     };
   }
-
+ 
   function renderStandings(results) {
     const listEl = panel.querySelector("#wla-results");
     if (!listEl) return;
@@ -1811,7 +1823,7 @@
       card.innerHTML = `
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
           <strong style="font-size:12px;color:#222;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px" title="${res.regionName}">${res.regionName}</strong>
-          <span class="wla-badge" style="${badgeStyle}">Rank #${res.userRank}</span>
+          <span class="wla-badge" style="${badgeStyle}">${res.userRank === 999 ? "Unranked" : "Rank #" + res.userRank}</span>
         </div>
         <div style="font-size:11px;color:#555;line-height:1.4">
           <div>My Progress: <strong>${res.userKm.toFixed(2)} km</strong></div>
