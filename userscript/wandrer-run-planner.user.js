@@ -2,7 +2,7 @@
 // @name         Wandrer Run Planner
 // @namespace    https://github.com/aslan91/wandrer-run-planner
 // x-release-please-start-version
-// @version      0.17.1
+// @version      0.18.0
 // x-release-please-end-version
 // @description  Plan runs that maximize untravelled (Wandrer red) paths within a target distance. Reads travelled data natively on wandrer.earth's Big Map, or from the Wandrer overlay on Strava's route builder.
 // @match        https://www.strava.com/routes*

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.18.0](https://github.com/aslan91/wandrer-run-planner/compare/v0.17.1...v0.18.0) (2026-07-06)
+
+
+### Features
+
+* **userscript:** filter unranked by default, sort by gap, add homebase quick wins ([889753a](https://github.com/aslan91/wandrer-run-planner/commit/889753add1d6adda6c4699aeb8aefdfa1bdba778))
+* **userscript:** support URL or path based homebase verification ([1970b5d](https://github.com/aslan91/wandrer-run-planner/commit/1970b5d58539976829dd86fc657a7553fdda75b7))
+
+
+### Bug Fixes
+
+* **userscript:** prioritize regions with progress and rename Earth ([5bfd447](https://github.com/aslan91/wandrer-run-planner/commit/5bfd4477888cf1ef02690255a1e00ea38d0bc900))
+* **userscript:** support direct region links on dashboard ([a7534b4](https://github.com/aslan91/wandrer-run-planner/commit/a7534b47c5f66e6870fe521743f9b50289c2acf7))
+
 ## [0.17.1](https://github.com/aslan91/wandrer-run-planner/compare/v0.17.0...v0.17.1) (2026-07-06)
 
 
