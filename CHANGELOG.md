@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.18.1](https://github.com/aslan91/wandrer-run-planner/compare/v0.18.0...v0.18.1) (2026-07-06)
+
+
+### Bug Fixes
+
+* **backend:** exclude unnamed footways, paths, and steps from score tracking ([bce8a04](https://github.com/aslan91/wandrer-run-planner/commit/bce8a0413b14594765aa560f8791e5ec24e1bfb8))
+* **backend:** exclude unnamed service roads from routing scoring ([296c1bd](https://github.com/aslan91/wandrer-run-planner/commit/296c1bde72908796986ae6b2ae73b487c25a1ce5))
+
 ## [0.18.0](https://github.com/aslan91/wandrer-run-planner/compare/v0.17.1...v0.18.0) (2026-07-06)
 
 
