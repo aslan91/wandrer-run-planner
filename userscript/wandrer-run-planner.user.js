@@ -458,6 +458,15 @@
 
       <div id="wrp-view-leader" style="display:none">
         <button id="wla-sync" style="width:100%;margin:6px 0;padding:6px;background:#fc4c02;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600">Analyze Regions</button>
+        <div style="margin:4px 0;border-bottom:1px solid #eee;padding-bottom:6px">
+          <label style="display:block;font-size:10px;color:#666;margin:2px 0">Homebase:
+            <input id="wla-homebase" type="text" value="Breitengüßbach" style="width:100%;box-sizing:border-box;padding:4px;border:1px solid #ccc;border-radius:4px;font-size:10px;margin-top:2px">
+          </label>
+          <label style="display:flex;align-items:center;font-size:10px;color:#444;margin:4px 0;cursor:pointer">
+            <input id="wla-show-unranked" type="checkbox" style="margin-right:4px">
+            Show unranked quick wins (📍)
+          </label>
+        </div>
         <div id="wla-status" style="font-size:11px;color:#666;margin:4px 0"></div>
         <div id="wla-results" style="display:flex;flex-direction:column;gap:8px;margin-top:8px"></div>
       </div>
@@ -502,7 +511,8 @@
       if (cached) {
         const { timestamp, data } = JSON.parse(cached);
         if (Date.now() - timestamp < 6 * 60 * 60 * 1000) {
-          renderStandings(data);
+          lastAnalysisResults = data;
+          applyFiltersAndRender();
           const ageMin = Math.round((Date.now() - timestamp) / 60000);
           panel.querySelector("#wla-status").textContent = `Loaded from cache (${ageMin}m ago).`;
         }
@@ -1734,10 +1744,12 @@
     return regions;
   }
  
-  async function fetchRegionLeaderboard(region) {
+  async function fetchRegionLeaderboard(region, homebase) {
     const resp = await fetch(`${region.url}?key=month`);
     if (!resp.ok) return null;
     const html = await resp.text();
+    const isCloseToHomebase = homebase ? html.toLowerCase().includes(homebase.toLowerCase()) : false;
+    
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, "text/html");
     
@@ -1780,7 +1792,7 @@
         rank, athlete, points, totalProgress, monthProgressText, monthKm, yearProgressText, isUser
       });
     });
-    return leaderboard;
+    return { leaderboard, isCloseToHomebase };
   }
  
   function analyzeLeaderboard(region, leaderboard) {
@@ -1818,13 +1830,13 @@
     };
   }
  
-  function renderStandings(results) {
+  function renderStandings(results, homebase) {
     const listEl = panel.querySelector("#wla-results");
     if (!listEl) return;
     listEl.innerHTML = "";
     
     if (results.length === 0) {
-      listEl.innerHTML = '<div style="text-align:center;color:#888;font-size:12px;padding:20px 0">No touched regions found.</div>';
+      listEl.innerHTML = '<div style="text-align:center;color:#888;font-size:12px;padding:20px 0">No matching regions.</div>';
       return;
     }
     
@@ -1853,10 +1865,17 @@
         }
       }
       
+      const isClose = res.isCloseToHomebase !== undefined ? res.isCloseToHomebase : (homebase && res.regionName.toLowerCase().includes(homebase.toLowerCase()));
+      const isQuickWin = res.userKm === 0 && isClose;
+      const quickWinBadge = isQuickWin ? `<span style="font-size:9px;background:#e2f0d9;color:#385723;padding:1px 4px;border-radius:4px;font-weight:600;margin-left:4px">Quick Win 📍</span>` : "";
+      
       card.innerHTML = `
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <strong style="font-size:12px;color:#222;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px" title="${res.regionName}">${res.regionName}</strong>
-          <span class="wla-badge" style="${badgeStyle}">${res.userRank === 999 ? "Unranked" : "Rank #" + res.userRank}</span>
+          <strong style="font-size:12px;color:#222;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px" title="${res.regionName}">${res.regionName}</strong>
+          <div>
+            ${quickWinBadge}
+            <span class="wla-badge" style="${badgeStyle}">${res.userRank === 999 ? "Unranked" : "Rank #" + res.userRank}</span>
+          </div>
         </div>
         <div style="font-size:11px;color:#555;line-height:1.4">
           <div>My Progress: <strong>${res.userKm.toFixed(2)} km</strong></div>
@@ -1870,10 +1889,38 @@
     });
   }
 
+  let lastAnalysisResults = [];
+
+  function applyFiltersAndRender() {
+    const listEl = panel.querySelector("#wla-results");
+    if (!listEl) return;
+    
+    const showUnranked = panel.querySelector("#wla-show-unranked")?.checked;
+    const homebase = panel.querySelector("#wla-homebase")?.value.trim().toLowerCase() || "";
+    
+    let filtered = [];
+    if (showUnranked) {
+      filtered = lastAnalysisResults.filter(res => {
+        if (res.userKm > 0) return true;
+        const isClose = res.isCloseToHomebase !== undefined ? res.isCloseToHomebase : (homebase && res.regionName.toLowerCase().includes(homebase));
+        return isClose && res.gapToRank1 < 25; // 25 km threshold
+      });
+    } else {
+      filtered = lastAnalysisResults.filter(res => res.userKm > 0);
+    }
+    
+    // Sort by smallest gap to Rank 1 ascending
+    filtered.sort((a, b) => a.gapToRank1 - b.gapToRank1);
+    
+    renderStandings(filtered, homebase);
+  }
+
   async function onSyncLeaderboard() {
     const statusEl = panel.querySelector("#wla-status");
     const listEl = panel.querySelector("#wla-results");
     listEl.innerHTML = "";
+    
+    const homebase = panel.querySelector("#wla-homebase")?.value.trim() || "Breitengüßbach";
     
     try {
       const regions = await fetchTouchedRegions();
@@ -1890,10 +1937,13 @@
         const r = regions[i];
         statusEl.textContent = `Querying (${i+1}/${limit}): ${r.name}...`;
         try {
-          const board = await fetchRegionLeaderboard(r);
-          if (board) {
-            const analysis = analyzeLeaderboard(r, board);
-            if (analysis) results.push(analysis);
+          const result = await fetchRegionLeaderboard(r, homebase);
+          if (result && result.leaderboard) {
+            const analysis = analyzeLeaderboard(r, result.leaderboard);
+            if (analysis) {
+              analysis.isCloseToHomebase = result.isCloseToHomebase;
+              results.push(analysis);
+            }
           }
           await sleep(500);
         } catch (err) {
@@ -1901,15 +1951,8 @@
         }
       }
       
-      results.sort((a, b) => {
-        if (a.userRank === 1 && b.userRank !== 1) return -1;
-        if (b.userRank === 1 && a.userRank !== 1) return 1;
-        const aGap = a.gapToRank3 || a.gapToRank1;
-        const bGap = b.gapToRank3 || b.gapToRank1;
-        return aGap - bGap;
-      });
-      
-      renderStandings(results);
+      lastAnalysisResults = results;
+      applyFiltersAndRender();
       statusEl.textContent = `Updated ${results.length} regions.`;
       
       try {
@@ -1928,5 +1971,39 @@
   const syncBtn = panel.querySelector("#wla-sync");
   if (syncBtn) {
     syncBtn.addEventListener("click", guard(onSyncLeaderboard));
+  }
+
+  // Bind settings listeners and restore cached values
+  const checkbox = panel.querySelector("#wla-show-unranked");
+  const homebaseInput = panel.querySelector("#wla-homebase");
+  
+  if (checkbox) {
+    try {
+      const cachedShow = localStorage.getItem("wla_show_unranked");
+      if (cachedShow !== null) {
+        checkbox.checked = cachedShow === "true";
+      }
+    } catch (_e) {}
+    checkbox.addEventListener("change", () => {
+      applyFiltersAndRender();
+      try {
+        localStorage.setItem("wla_show_unranked", checkbox.checked);
+      } catch (_e) {}
+    });
+  }
+  
+  if (homebaseInput) {
+    try {
+      const cachedHome = localStorage.getItem("wla_homebase");
+      if (cachedHome !== null) {
+        homebaseInput.value = cachedHome;
+      }
+    } catch (_e) {}
+    homebaseInput.addEventListener("input", () => {
+      applyFiltersAndRender();
+      try {
+        localStorage.setItem("wla_homebase", homebaseInput.value);
+      } catch (_e) {}
+    });
   }
 })();
