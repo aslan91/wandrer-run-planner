@@ -1712,16 +1712,25 @@
           }
         }
         
-        if (slug && slug !== "leaderboard" && !seen.has(slug)) {
+        if (slug && slug !== "leaderboard" && name !== "Leaderboard" && !seen.has(slug)) {
           seen.add(slug);
           const cleanName = name.replace(/^[•👑\s]+|[👑\s]+$/g, "").trim();
           if (cleanName) {
-            regions.push({ name: cleanName, slug, url });
+            let progress = 0.0;
+            const itemEl = link.closest('.new-area.item');
+            if (itemEl) {
+              const progSpan = itemEl.querySelector('.area-progress-mileage span');
+              if (progSpan) {
+                progress = parseFloat(progSpan.textContent.replace(/,/g, "")) || 0.0;
+              }
+            }
+            regions.push({ name: cleanName, slug, url, progress });
           }
         }
       }
     });
     
+    regions.sort((a, b) => b.progress - a.progress);
     return regions;
   }
  
@@ -1876,7 +1885,7 @@
       statusEl.textContent = `Found ${regions.length} regions. Querying standings...`;
       const results = [];
       
-      const limit = Math.min(regions.length, 12);
+      const limit = Math.min(regions.length, 15);
       for (let i = 0; i < limit; i++) {
         const r = regions[i];
         statusEl.textContent = `Querying (${i+1}/${limit}): ${r.name}...`;
