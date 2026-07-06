@@ -459,8 +459,8 @@
       <div id="wrp-view-leader" style="display:none">
         <button id="wla-sync" style="width:100%;margin:6px 0;padding:6px;background:#fc4c02;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600">Analyze Regions</button>
         <div style="margin:4px 0;border-bottom:1px solid #eee;padding-bottom:6px">
-          <label style="display:block;font-size:10px;color:#666;margin:2px 0">Homebase:
-            <input id="wla-homebase" type="text" value="Breitengüßbach" style="width:100%;box-sizing:border-box;padding:4px;border:1px solid #ccc;border-radius:4px;font-size:10px;margin-top:2px">
+          <label style="display:block;font-size:10px;color:#666;margin:2px 0">Homebase (URL or Name):
+            <input id="wla-homebase" type="text" value="https://wandrer.earth/a/landkreis-bamberg-oberfranken" style="width:100%;box-sizing:border-box;padding:4px;border:1px solid #ccc;border-radius:4px;font-size:10px;margin-top:2px">
           </label>
           <label style="display:flex;align-items:center;font-size:10px;color:#444;margin:4px 0;cursor:pointer">
             <input id="wla-show-unranked" type="checkbox" style="margin-right:4px">
@@ -1744,11 +1744,27 @@
     return regions;
   }
  
+  function getHomebaseSlug(val) {
+    if (!val) return "";
+    let clean = val.trim();
+    if (clean.includes("://") || clean.startsWith("/")) {
+      try {
+        const url = new URL(clean, window.location.origin);
+        clean = url.pathname;
+      } catch (_e) {
+        clean = clean.replace(/^https?:\/\/[^\/]+/, "");
+      }
+    }
+    clean = clean.replace(/^\/a\//, "");
+    return clean.split("?")[0].split("#")[0].replace(/\/$/, "").toLowerCase();
+  }
+
   async function fetchRegionLeaderboard(region, homebase) {
     const resp = await fetch(`${region.url}?key=month`);
     if (!resp.ok) return null;
     const html = await resp.text();
-    const isCloseToHomebase = homebase ? html.toLowerCase().includes(homebase.toLowerCase()) : false;
+    const hbSlug = getHomebaseSlug(homebase);
+    const isCloseToHomebase = hbSlug ? html.toLowerCase().includes(hbSlug) : false;
     
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, "text/html");
@@ -1864,8 +1880,8 @@
           gapHtml += `<div style="margin-top:2px">Gap to Rank 1: <span style="color:#e06666;font-weight:600">+${res.gapToRank1.toFixed(2)} km</span> <span style="color:#888">(${res.rank1.athlete})</span></div>`;
         }
       }
-      
-      const isClose = res.isCloseToHomebase !== undefined ? res.isCloseToHomebase : (homebase && res.regionName.toLowerCase().includes(homebase.toLowerCase()));
+      const hbSlug = getHomebaseSlug(homebase);
+      const isClose = res.isCloseToHomebase !== undefined ? res.isCloseToHomebase : (hbSlug && (res.regionName.toLowerCase().includes(hbSlug) || res.regionUrl.toLowerCase().includes(hbSlug)));
       const isQuickWin = res.userKm === 0 && isClose;
       const quickWinBadge = isQuickWin ? `<span style="font-size:9px;background:#e2f0d9;color:#385723;padding:1px 4px;border-radius:4px;font-weight:600;margin-left:4px">Quick Win 📍</span>` : "";
       
@@ -1896,13 +1912,14 @@
     if (!listEl) return;
     
     const showUnranked = panel.querySelector("#wla-show-unranked")?.checked;
-    const homebase = panel.querySelector("#wla-homebase")?.value.trim().toLowerCase() || "";
+    const homebase = panel.querySelector("#wla-homebase")?.value.trim() || "";
+    const hbSlug = getHomebaseSlug(homebase);
     
     let filtered = [];
     if (showUnranked) {
       filtered = lastAnalysisResults.filter(res => {
         if (res.userKm > 0) return true;
-        const isClose = res.isCloseToHomebase !== undefined ? res.isCloseToHomebase : (homebase && res.regionName.toLowerCase().includes(homebase));
+        const isClose = res.isCloseToHomebase !== undefined ? res.isCloseToHomebase : (hbSlug && (res.regionName.toLowerCase().includes(hbSlug) || res.regionUrl.toLowerCase().includes(hbSlug)));
         return isClose && res.gapToRank1 < 25; // 25 km threshold
       });
     } else {
