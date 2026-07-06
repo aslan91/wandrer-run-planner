@@ -1657,43 +1657,67 @@
       const parser = new DOMParser();
       const dashDoc = parser.parseFromString(html, "text/html");
       
-      const iframe = dashDoc.querySelector('iframe[src*="my_places_iframe"]');
-      let iframeUrl = "";
-      if (iframe) {
-        iframeUrl = iframe.getAttribute("src");
+      const hasDirectLinks = dashDoc.querySelector('a[href^="/a/"]') || 
+                             dashDoc.querySelector('a[href*="/athletes/"]');
+                             
+      if (hasDirectLinks) {
+        doc = dashDoc;
       } else {
-        const profileLink = dashDoc.querySelector('a[href*="/athletes/"]');
-        if (profileLink) {
-          const match = profileLink.getAttribute("href").match(/\/athletes\/(\d+)/);
-          if (match) {
-            iframeUrl = `/dashboard/my_places_iframe/${match[1]}`;
+        const iframe = dashDoc.querySelector('iframe[src*="my_places_iframe"]');
+        let iframeUrl = "";
+        if (iframe) {
+          iframeUrl = iframe.getAttribute("src");
+        } else {
+          const profileLink = dashDoc.querySelector('a[href*="/athletes/"]');
+          if (profileLink) {
+            const match = profileLink.getAttribute("href").match(/\/athletes\/(\d+)/);
+            if (match) {
+              iframeUrl = `/dashboard/my_places_iframe/${match[1]}`;
+            }
           }
         }
+        
+        if (!iframeUrl) {
+          throw new Error("Could not find regions on dashboard. Ensure you are logged in.");
+        }
+        
+        statusEl.textContent = "Fetching regions list...";
+        const iframeResp = await fetch(iframeUrl);
+        if (!iframeResp.ok) throw new Error(`Could not load places list: ${iframeResp.status}`);
+        const iframeHtml = await iframeResp.text();
+        doc = parser.parseFromString(iframeHtml, "text/html");
       }
-      
-      if (!iframeUrl) {
-        throw new Error("Could not find places iframe. Ensure you are logged in.");
-      }
-      
-      statusEl.textContent = "Fetching regions list...";
-      const iframeResp = await fetch(iframeUrl);
-      if (!iframeResp.ok) throw new Error(`Could not load places list: ${iframeResp.status}`);
-      const iframeHtml = await iframeResp.text();
-      doc = parser.parseFromString(iframeHtml, "text/html");
     }
     
-    const links = doc.querySelectorAll('a[href^="/a/"]');
+    const links = doc.querySelectorAll('a[href^="/a/"], a[href*="/athletes/"]');
     const regions = [];
     const seen = new Set();
     links.forEach(link => {
       let href = link.getAttribute("href");
       const name = link.textContent.trim();
       if (href && name) {
+        let slug = "";
+        let url = "";
+        
         href = href.split("?")[0].split("#")[0];
-        const slug = href.replace(/^\/a\//, "");
+        
+        if (href.startsWith("/a/")) {
+          slug = href.replace(/^\/a\//, "");
+          url = href;
+        } else {
+          const match = href.match(/\/athletes\/\d+\/([^/]+)$/);
+          if (match && match[1] !== "edit") {
+            slug = match[1];
+            url = `/a/${slug}`;
+          }
+        }
+        
         if (slug && slug !== "leaderboard" && !seen.has(slug)) {
           seen.add(slug);
-          regions.push({ name, slug, url: href });
+          const cleanName = name.replace(/^[•👑\s]+|[👑\s]+$/g, "").trim();
+          if (cleanName) {
+            regions.push({ name: cleanName, slug, url });
+          }
         }
       }
     });
