@@ -65,6 +65,22 @@ def test_build_graph_normal_way_not_excluded() -> None:
     assert g[1][2]["excluded"] is False
 
 
+def test_build_graph_unnamed_service_is_excluded() -> None:
+    # Service roads with no name are excluded.
+    data = _overpass_way(1, [(1, 0.0, 0.0), (2, 0.0, 0.001)], highway="service")
+    g = build_graph(data)
+    assert g[1][2]["excluded"] is True
+
+
+def test_build_graph_named_service_not_excluded() -> None:
+    # Service roads with a name are not excluded (unless they have an excluded service type).
+    data = _overpass_way(1, [(1, 0.0, 0.0), (2, 0.0, 0.001)], highway="service")
+    data["elements"][0]["tags"]["name"] = "Main Service Drive"
+    g = build_graph(data)
+    assert g[1][2]["excluded"] is False
+
+
+
 def test_nearest_node_finds_closest() -> None:
     data = _overpass_way(1, [(1, 0.0, 0.0), (2, 0.0, 0.01), (3, 0.0, 0.02)])
     g = build_graph(data)

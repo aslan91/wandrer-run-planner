@@ -77,7 +77,11 @@ _EXCLUDED_SERVICE = {
 
 def _is_excluded(tags: dict) -> bool:
     """True if Wandrer ignores this way for scoring (parking aisles, driveways…)."""
-    return tags.get("service") in _EXCLUDED_SERVICE or tags.get("area") == "yes"
+    if tags.get("area") == "yes":
+        return True
+    if tags.get("service") in _EXCLUDED_SERVICE:
+        return True
+    return tags.get("highway") == "service" and not tags.get("name")
 
 
 def _cache_path(query: str) -> Path:

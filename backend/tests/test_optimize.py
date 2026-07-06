@@ -76,3 +76,24 @@ def test_plan_route_covers_dead_end_spur() -> None:
     # left via the same junction (out-and-back).
     assert spur_tip in route.nodes
     assert route.new_m > 0
+
+
+def test_plan_route_does_not_reward_excluded() -> None:
+    # Option 1 has new ground, Option 2 is excluded. The optimizer should choose Option 1.
+    g = nx.Graph()
+    deg = 100.0 / 111_320.0
+    g.add_node(0, xy=(0.0, 0.0))
+    g.add_node(1, xy=(0.0, deg))
+    g.add_node(2, xy=(deg, 0.0))
+
+    # 0-1 is untravelled
+    g.add_edge(0, 1, length=100.0, travelled=False, excluded=False, osm_ids=set())
+    # 0-2 is excluded
+    g.add_edge(0, 2, length=100.0, travelled=False, excluded=True, osm_ids=set())
+
+    route = plan_route(g, start=0, target_m=200.0, tol_m=10.0, attempts=100, seed=1)
+    assert route is not None
+    assert 2 not in route.nodes
+    assert 1 in route.nodes
+
+
