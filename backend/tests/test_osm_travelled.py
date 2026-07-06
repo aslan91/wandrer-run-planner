@@ -80,6 +80,28 @@ def test_build_graph_named_service_not_excluded() -> None:
     assert g[1][2]["excluded"] is False
 
 
+def test_build_graph_unnamed_footway_is_excluded() -> None:
+    # Footway with no name and no explicit designation is excluded.
+    data = _overpass_way(1, [(1, 0.0, 0.0), (2, 0.0, 0.001)], highway="footway")
+    g = build_graph(data)
+    assert g[1][2]["excluded"] is True
+
+
+def test_build_graph_unnamed_footway_with_bicycle_is_not_excluded() -> None:
+    # Footway with no name but explicit cycleway designation is not excluded.
+    data = _overpass_way(1, [(1, 0.0, 0.0), (2, 0.0, 0.001)], highway="footway")
+    data["elements"][0]["tags"]["bicycle"] = "designated"
+    g = build_graph(data)
+    assert g[1][2]["excluded"] is False
+
+
+def test_build_graph_named_footway_is_not_excluded() -> None:
+    # Named footway is not excluded.
+    data = _overpass_way(1, [(1, 0.0, 0.0), (2, 0.0, 0.001)], highway="footway")
+    data["elements"][0]["tags"]["name"] = "Park Walkway"
+    g = build_graph(data)
+    assert g[1][2]["excluded"] is False
+
 
 def test_nearest_node_finds_closest() -> None:
     data = _overpass_way(1, [(1, 0.0, 0.0), (2, 0.0, 0.01), (3, 0.0, 0.02)])

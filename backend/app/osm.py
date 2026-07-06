@@ -76,12 +76,32 @@ _EXCLUDED_SERVICE = {
 
 
 def _is_excluded(tags: dict) -> bool:
-    """True if Wandrer ignores this way for scoring (parking aisles, driveways…)."""
+    """True if Wandrer ignores this way for scoring."""
     if tags.get("area") == "yes":
         return True
-    if tags.get("service") in _EXCLUDED_SERVICE:
+    if tags.get("access") in {"customers", "delivery", "private", "no"}:
         return True
-    return tags.get("highway") == "service" and not tags.get("name")
+
+    highway = tags.get("highway")
+
+    # Exclude unnamed service roads or those with excluded service types
+    if highway == "service":
+        if tags.get("service") in _EXCLUDED_SERVICE:
+            return True
+        if not tags.get("name"):
+            return True
+
+    # Exclude unnamed footways, paths, and steps unless they have explicit cycle/foot designation
+    if highway in {"footway", "path", "steps"}:
+        if tags.get("footway") in {"sidewalk", "crossing", "traffic_island"}:
+            return True
+        if not tags.get("name"):
+            has_cycle = tags.get("bicycle") in {"yes", "designated"}
+            has_foot = tags.get("foot") in {"yes", "designated"}
+            if not (has_cycle or has_foot):
+                return True
+
+    return False
 
 
 def _cache_path(query: str) -> Path:
