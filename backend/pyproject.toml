@@ -18,7 +18,7 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.5",
     "mypy>=1.10",
-    "httpx>=0.27",  # FastAPI TestClient dependency
+    "httpx2>=2.13",  # FastAPI / Starlette TestClient dependency
     "types-requests>=2.31",
 ]
 
@@ -64,4 +64,4 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "-q"
+addopts = "-q --basetemp=.pytest_temp -p no:cacheprovider"
