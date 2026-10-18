@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.2](https://github.com/aslan91/wandrer-run-planner/compare/v0.18.1...v0.18.2) (2026-10-18)
+
+
+### Bug Fixes
+
+* **deps:** upgrade testclient to httpx2, add uv lock and eliminate pytest warnings ([648ec48](https://github.com/aslan91/wandrer-run-planner/commit/648ec48580357a30c29b505e42003f3b7dc7f96f))
+
 ## [0.18.1](https://github.com/aslan91/wandrer-run-planner/compare/v0.18.0...v0.18.1) (2026-07-06)
 
 
