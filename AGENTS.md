@@ -1,6 +1,6 @@
 # Agent Guidelines for `wandrer-run-planner`
 
-Welcome, Agent! This repository implements an intelligent route planning system that generates running loops designed to **maximize coverage of untravelled paths** (Wandrer's unique red segments) within a user-specified distance target.
+This repository implements an intelligent route planning system that generates running loops designed to **maximize coverage of untravelled paths** (Wandrer's unique red segments) within a user-specified distance target.
 
 ---
 
@@ -47,7 +47,18 @@ Welcome, Agent! This repository implements an intelligent route planning system 
 
 ## 4. Operational Verification & Testing Protocol
 
-All backend verification is executed from `backend/`:
+### Scoped Silent Commands (Multi-Agent / OpenCode Workflow)
+> [!IMPORTANT]
+> **Kein `uv` (Python 3.10 mit `setuptools`/`pip` in `backend/.venv`) + JS-Userscript (`userscript/wandrer-run-planner.user.js`)**.
+
+Aus dem Repo-Root ausführen:
+- **Single Test File:** `backend\.venv\Scripts\pytest.exe backend/tests/test_planner.py -p no:logfire --basetemp=.pytest_temp -q --tb=short --no-header`
+- **Single Test Function:** `backend\.venv\Scripts\pytest.exe backend/tests/test_optimize.py -k "<test_name>" -p no:logfire --basetemp=.pytest_temp -q --tb=short --no-header`
+- **Lint & Format:** `backend\.venv\Scripts\ruff.exe check --fix backend/app/<datei.py> -q`
+- **Pflicht-Typecheck nach jedem Python-Edit:** `backend\.venv\Scripts\mypy.exe backend/app/<datei.py> --no-error-summary`
+- **Userscript Syntax-Check (Userscript-Header `// ==UserScript==` niemals beschädigen):** `node --check userscript/wandrer-run-planner.user.js`
+
+All full-suite backend verification is executed from `backend/`:
 
 ```powershell
 # 1. Linting (Ruff):
